@@ -35,7 +35,11 @@ public abstract class AbstractVideoCaptureController {
     }
 
     public void initializeVideoCapturer() {
-        videoCapturer = createVideoCapturer();
+        // Don't replace existing EffectsSDK capturer
+        // TODO: find better way to handle this
+        if (videoCapturer == null) {
+            videoCapturer = createVideoCapturer();
+        }
     }
 
     @Nullable

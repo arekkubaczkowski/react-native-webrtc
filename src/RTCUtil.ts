@@ -74,6 +74,9 @@ function extractNumber(constraints, prop) {
     }
 }
 
+// Keep track of EffectsSDK state globally for sticky behavior
+let globalEffectsSdkEnabled = false;
+
 function normalizeMediaConstraints(constraints, mediaType) {
     switch (mediaType) {
         case 'audio':
@@ -85,11 +88,26 @@ function normalizeMediaConstraints(constraints, mediaType) {
                 facingMode: extractString(constraints, 'facingMode'),
                 frameRate: extractNumber(constraints, 'frameRate'),
                 height: extractNumber(constraints, 'height'),
-                width: extractNumber(constraints, 'width')
+                width: extractNumber(constraints, 'width'),
+                effectsSdkRequired: constraints.effectsSdkRequired
             };
 
             if (!c.deviceId) {
                 delete c.deviceId;
+            }
+            // TODO: Find out why constraints are not being applied after restarting track.
+            // EffectsSDK sticky behavior: once enabled, always enabled
+            if (c.effectsSdkRequired === true) {
+                globalEffectsSdkEnabled = true;
+            }
+            
+            // If EffectsSDK was previously enabled, keep it enabled
+            if (globalEffectsSdkEnabled && typeof c.effectsSdkRequired === 'undefined') {
+                c.effectsSdkRequired = true;
+            }
+
+            if (typeof c.effectsSdkRequired === 'undefined') {
+                delete c.effectsSdkRequired;
             }
 
             if (!FACING_MODES.includes(c.facingMode)) {

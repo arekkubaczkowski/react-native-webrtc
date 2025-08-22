@@ -48,6 +48,9 @@ class GetUserMediaImpl {
     private static final int PERMISSION_REQUEST_CODE = (int) (Math.random() * Short.MAX_VALUE);
     
     private static final Map<String, EffectsSDKCameraCapturer> effectsSDKCapturerMap = new ConcurrentHashMap<>();
+    
+    // Keep track of the last EffectsSDK capturer for reuse
+    private static EffectsSDKCameraCapturer lastEffectsSDKCapturer = null;
 
     private CameraEnumerator cameraEnumerator;
     private final ReactApplicationContext reactContext;
@@ -174,7 +177,12 @@ class GetUserMediaImpl {
     }
     
     private EffectsSDKCameraCapturer getEffectsSdkVideoCapturer(String trackId) {
-        return effectsSDKCapturerMap.get(trackId);
+        EffectsSDKCameraCapturer capturer = effectsSDKCapturerMap.get(trackId);
+        if (capturer != null) {
+            return capturer;
+        }
+        
+        return null;
     }
     
     private String getCameraNameFromConstraints(ReadableMap videoConstraints) {
@@ -284,35 +292,49 @@ class GetUserMediaImpl {
         if (constraints.hasKey("video")) {
             ReadableMap videoConstraintsMap = constraints.getMap("video");
 
-            Log.d(TAG, "getUserMedia(video): " + videoConstraintsMap);
-
             boolean effectsSdkRequired = getEffectsSDKConstraint(videoConstraintsMap);
-            
+
             CameraCaptureController videoCaptureController = new CameraCaptureController(
                     reactContext.getCurrentActivity(), getCameraEnumerator(), videoConstraintsMap);
             
-            if (effectsSdkRequired) {
-                String cameraName = getCameraNameFromConstraints(videoConstraintsMap);
-                if (cameraName != null) {
-                    CameraVideoCapturer.CameraEventsHandler cameraEventsHandler = new CameraVideoCapturer.CameraEventsHandler() {
-                        @Override
-                        public void onCameraError(String errorDescription) {}
-                        @Override
-                        public void onCameraDisconnected() {}
-                        @Override
-                        public void onCameraFreezed(String errorDescription) {}
-                        @Override
-                        public void onCameraOpening(String cameraName) {}
-                        @Override
-                        public void onFirstFrameAvailable() {}
-                        @Override
-                        public void onCameraClosed() {}
-                    };
+            boolean hasExistingEffectsSDK = !effectsSDKCapturerMap.isEmpty();
+            boolean shouldUseEffectsSDK = effectsSdkRequired || (lastEffectsSDKCapturer != null) || hasExistingEffectsSDK;
+
+            if (shouldUseEffectsSDK) {
+                VideoCapturer effectsSDKCapturer = null;
+                
+                if (lastEffectsSDKCapturer != null) {
+                    effectsSDKCapturer = lastEffectsSDKCapturer;
+                    lastEffectsSDKCapturer = null; // Clear it so it's not reused again
+                } else if (hasExistingEffectsSDK) {
+                    EffectsSDKCameraCapturer existingCapturer = effectsSDKCapturerMap.values().iterator().next();
+                    effectsSDKCapturer = existingCapturer;
+                } else {
+                    // Create new EffectsSDK capturer
+                    String cameraName = getCameraNameFromConstraints(videoConstraintsMap);
                     
-                    VideoCapturer effectsSDKCapturer = createEffectsSDKVideoCapturer(cameraName, cameraEventsHandler);
-                    if (effectsSDKCapturer != null) {
-                        videoCaptureController.videoCapturer = effectsSDKCapturer;
+                    if (cameraName != null) {
+                        CameraVideoCapturer.CameraEventsHandler cameraEventsHandler = new CameraVideoCapturer.CameraEventsHandler() {
+                            @Override
+                            public void onCameraError(String errorDescription) {}
+                            @Override
+                            public void onCameraDisconnected() {}
+                            @Override
+                            public void onCameraFreezed(String errorDescription) {}
+                            @Override
+                            public void onCameraOpening(String cameraName) {}
+                            @Override
+                            public void onFirstFrameAvailable() {}
+                            @Override
+                            public void onCameraClosed() {}
+                        };
+                        
+                        effectsSDKCapturer = createEffectsSDKVideoCapturer(cameraName, cameraEventsHandler);
                     }
+                }
+                
+                if (effectsSDKCapturer != null) {
+                    videoCaptureController.videoCapturer = effectsSDKCapturer;
                 }
             }
             
@@ -351,6 +373,10 @@ class GetUserMediaImpl {
     void disposeTrack(String id) {
         TrackPrivate track = tracks.remove(id);
         if (track != null) {
+            EffectsSDKCameraCapturer capturer = effectsSDKCapturerMap.get(id);
+            if (capturer != null) {
+                lastEffectsSDKCapturer = capturer; // Save for reuse
+            }
             effectsSDKCapturerMap.remove(id);
             
             track.dispose();
