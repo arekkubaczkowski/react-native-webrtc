@@ -95,12 +95,13 @@ function normalizeMediaConstraints(constraints, mediaType) {
             if (!c.deviceId) {
                 delete c.deviceId;
             }
+
             // TODO: Find out why constraints are not being applied after restarting track.
             // EffectsSDK sticky behavior: once enabled, always enabled
             if (c.effectsSdkRequired === true) {
                 globalEffectsSdkEnabled = true;
             }
-            
+
             // If EffectsSDK was previously enabled, keep it enabled
             if (globalEffectsSdkEnabled && typeof c.effectsSdkRequired === 'undefined') {
                 c.effectsSdkRequired = true;
