@@ -138,7 +138,7 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
         WebRTCModule.mediaStreamTrackSetVideoEffects(this.id, names);
     }
 
-    setVideoEffect(name: string) {
+    _setVideoEffect(name: string) {
         this._setVideoEffects([name]);
     }
 
