@@ -139,7 +139,7 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     _setVideoEffect(name: string) {
-        this._setVideoEffects([name]);
+        this._setVideoEffects([ name ]);
     }
 
     /**
