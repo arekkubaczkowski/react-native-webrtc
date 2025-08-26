@@ -281,7 +281,7 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     /**
      * Get EffectsSDK zoom level
      */
-    async _getEffectsSdkZoomLevel(): Promise<number> {
+    async getEffectsSdkZoomLevel(): Promise<number> {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
         }
