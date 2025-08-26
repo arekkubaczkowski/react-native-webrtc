@@ -1,8 +1,4 @@
-import {
-    EventTarget,
-    Event,
-    defineEventAttribute,
-} from 'event-target-shim/index';
+import { EventTarget, Event, defineEventAttribute } from 'event-target-shim/index';
 import { NativeModules } from 'react-native';
 
 import { MediaTrackConstraints } from './Constraints';
@@ -16,30 +12,30 @@ const { WebRTCModule } = NativeModules;
 type MediaStreamTrackState = 'live' | 'ended';
 
 export type MediaStreamTrackInfo = {
-  id: string;
-  kind: string;
-  remote: boolean;
-  constraints: object;
-  enabled: boolean;
-  settings: object;
-  peerConnectionId: number;
-  readyState: MediaStreamTrackState;
-};
+    id: string;
+    kind: string;
+    remote: boolean;
+    constraints: object;
+    enabled: boolean;
+    settings: object;
+    peerConnectionId: number;
+    readyState: MediaStreamTrackState;
+}
 
 export type MediaTrackSettings = {
-  width?: number;
-  height?: number;
-  frameRate?: number;
-  facingMode?: string;
-  deviceId?: string;
-  groupId?: string;
-};
+    width?: number;
+    height?: number;
+    frameRate?: number;
+    facingMode?: string;
+    deviceId?: string;
+    groupId?: string;
+}
 
 type MediaStreamTrackEventMap = {
-  ended: Event<'ended'>;
-  mute: Event<'mute'>;
-  unmute: Event<'unmute'>;
-};
+    ended: Event<'ended'>;
+    mute: Event<'mute'>;
+    unmute: Event<'unmute'>;
+}
 
 export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventMap> {
     _constraints: MediaTrackConstraints;
@@ -88,11 +84,7 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
             return;
         }
 
-        WebRTCModule.mediaStreamTrackSetEnabled(
-            this.remote ? this._peerConnectionId : -1,
-            this.id,
-            this._enabled
-        );
+        WebRTCModule.mediaStreamTrackSetEnabled(this.remote ? this._peerConnectionId : -1, this.id, this._enabled);
     }
 
     get muted(): boolean {
@@ -109,14 +101,14 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Private / custom API for switching the cameras on the fly, without the
-   * need for adding / removing tracks or doing any SDP renegotiation.
-   *
-   * This is how the reference application (AppRTCMobile) implements camera
-   * switching.
-   *
-   * @deprecated Use applyConstraints instead.
-   */
+     * Private / custom API for switching the cameras on the fly, without the
+     * need for adding / removing tracks or doing any SDP renegotiation.
+     *
+     * This is how the reference application (AppRTCMobile) implements camera
+     * switching.
+     *
+     * @deprecated Use applyConstraints instead.
+     */
     _switchCamera(): void {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
@@ -129,8 +121,7 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
         const constraints = deepClone(this._settings);
 
         delete constraints.deviceId;
-        constraints.facingMode =
-      this._settings.facingMode === 'user' ? 'environment' : 'user';
+        constraints.facingMode = this._settings.facingMode === 'user' ? 'environment' : 'user';
 
         this.applyConstraints(constraints);
     }
@@ -152,9 +143,9 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Switch camera on existing track (Flutter WebRTC pattern)
-   * This avoids creating new tracks and is EffectsSDK compatible
-   */
+     * Switch camera on existing track (Flutter WebRTC pattern)
+     * This avoids creating new tracks and is EffectsSDK compatible
+     */
     async switchCameraNative(): Promise<boolean> {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
@@ -168,8 +159,8 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Initialize EffectsSDK for this video track
-   */
+     * Initialize EffectsSDK for this video track
+     */
     async initializeEffectsSDK(
         customerId: string,
         url?: string
@@ -186,8 +177,8 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Set EffectsSDK pipeline mode
-   */
+     * Set EffectsSDK pipeline mode
+     */
     setEffectsSdkPipelineMode(pipelineMode: string): void {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
@@ -201,8 +192,8 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Set EffectsSDK blur power
-   */
+     * Set EffectsSDK blur power
+     */
     setEffectsSdkBlurPower(blurPower: number): void {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
@@ -216,8 +207,8 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Enable/disable EffectsSDK video stream
-   */
+     * Enable/disable EffectsSDK video stream
+     */
     enableEffectsSdkVideoStream(enabled: boolean): void {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
@@ -231,8 +222,8 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Enable/disable EffectsSDK beautification
-   */
+     * Enable/disable EffectsSDK beautification
+     */
     enableEffectsSdkBeautification(enabled: boolean): void {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
@@ -246,8 +237,8 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Check if EffectsSDK beautification is enabled
-   */
+     * Check if EffectsSDK beautification is enabled
+     */
     async isEffectsSdkBeautificationEnabled(): Promise<boolean> {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
@@ -261,8 +252,8 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Set EffectsSDK beautification power
-   */
+     * Set EffectsSDK beautification power
+     */
     setEffectsSdkBeautificationPower(power: number): void {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
@@ -276,8 +267,8 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Set EffectsSDK zoom level
-   */
+     * Set EffectsSDK zoom level
+     */
     setEffectsSdkZoomLevel(zoomLevel: number): void {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
@@ -291,8 +282,8 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Get EffectsSDK zoom level
-   */
+     * Get EffectsSDK zoom level
+     */
     async _getEffectsSdkZoomLevel(): Promise<number> {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
@@ -306,8 +297,8 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Enable/disable EffectsSDK sharpening
-   */
+     * Enable/disable EffectsSDK sharpening
+     */
     enableEffectsSdkSharpening(enabled: boolean): void {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
@@ -321,8 +312,8 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Set EffectsSDK sharpening strength
-   */
+     * Set EffectsSDK sharpening strength
+     */
     setEffectsSdkSharpeningStrength(strength: number): void {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
@@ -336,8 +327,8 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Get EffectsSDK sharpening strength
-   */
+     * Get EffectsSDK sharpening strength
+     */
     async getEffectsSdkSharpeningStrength(): Promise<number> {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
@@ -351,8 +342,8 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Set EffectsSDK color filter strength
-   */
+     * Set EffectsSDK color filter strength
+     */
     setEffectsSdkColorFilterStrength(strength: number): void {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
@@ -366,8 +357,8 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Set EffectsSDK color correction mode
-   */
+     * Set EffectsSDK color correction mode
+     */
     setEffectsSdkColorCorrectionMode(mode: string): void {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
@@ -381,11 +372,11 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Internal function which is used to set the muted state on remote tracks and
-   * emit the mute / unmute event.
-   *
-   * @param muted Whether the track should be marked as muted / unmuted.
-   */
+     * Internal function which is used to set the muted state on remote tracks and
+     * emit the mute / unmute event.
+     *
+     * @param muted Whether the track should be marked as muted / unmuted.
+     */
     _setMutedInternal(muted: boolean) {
         if (!this.remote) {
             throw new Error('Track is not remote!');
@@ -396,47 +387,38 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
-   * Custom API for setting the volume on an individual audio track.
-   *
-   * @param volume a gain value in the range of 0-10. defaults to 1.0
-   */
+     * Custom API for setting the volume on an individual audio track.
+     *
+     * @param volume a gain value in the range of 0-10. defaults to 1.0
+     */
     _setVolume(volume: number) {
         if (this.kind !== 'audio') {
             throw new Error('Only implemented for audio tracks');
         }
 
-        WebRTCModule.mediaStreamTrackSetVolume(
-            this.remote ? this._peerConnectionId : -1,
-            this.id,
-            volume
-        );
+        WebRTCModule.mediaStreamTrackSetVolume(this.remote ? this._peerConnectionId : -1, this.id, volume);
     }
 
     /**
-   * Applies a new set of constraints to the track.
-   *
-   * @param constraints An object listing the constraints
-   * to apply to the track's constrainable properties; any existing
-   * constraints are replaced with the new values specified, and any
-   * constrainable properties not included are restored to their default
-   * constraints. If this parameter is omitted, all currently set custom
-   * constraints are cleared.
-   */
+     * Applies a new set of constraints to the track.
+     *
+     * @param constraints An object listing the constraints
+     * to apply to the track's constrainable properties; any existing
+     * constraints are replaced with the new values specified, and any
+     * constrainable properties not included are restored to their default
+     * constraints. If this parameter is omitted, all currently set custom
+     * constraints are cleared.
+     */
     async applyConstraints(constraints?: MediaTrackConstraints): Promise<void> {
         if (this.kind !== 'video') {
-            log.info(
-                `Only implemented for video tracks, ignoring applyConstraints for ${this.id}`
-            );
+            log.info(`Only implemented for video tracks, ignoring applyConstraints for ${this.id}`);
 
             return;
         }
 
         const normalized = normalizeConstraints({ video: constraints ?? true });
 
-        this._settings = await WebRTCModule.mediaStreamTrackApplyConstraints(
-            this.id,
-            normalized.video
-        );
+        this._settings = await WebRTCModule.mediaStreamTrackApplyConstraints(this.id, normalized.video);
         this._constraints = constraints ?? {};
     }
 
