@@ -126,7 +126,7 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
         this.applyConstraints(constraints);
     }
 
-    setVideoEffects(names: string[]) {
+    _setVideoEffects(names: string[]) {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
         }
@@ -139,7 +139,7 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     setVideoEffect(name: string) {
-        this.setVideoEffects([ name ]);
+        this._setVideoEffects([name]);
     }
 
     /**
@@ -161,10 +161,7 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     /**
      * Initialize EffectsSDK for this video track
      */
-    async initializeEffectsSDK(
-        customerId: string,
-        url?: string
-    ): Promise<string> {
+    async initializeEffectsSDK(customerId: string, url?: string): Promise<string> {
         if (this.remote) {
             throw new Error('Not implemented for remote tracks');
         }
