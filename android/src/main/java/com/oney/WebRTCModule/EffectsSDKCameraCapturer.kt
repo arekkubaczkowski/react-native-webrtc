@@ -2,6 +2,8 @@ package com.oney.WebRTCModule
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.util.Size
 import com.effectssdk.tsvb.Camera
@@ -44,6 +46,7 @@ class EffectsSDKCameraCapturer(
     private var cameraPipeline: CameraPipeline? = null
     private var defaultPipelineOptions = EffectsSdkOptionsCache()
     private var currentPipelineOptions = EffectsSdkOptionsCache()
+    private var cameraThreadHandler: Handler? = null
 
     init {
         //Custom event handler. Used until EffectsSDK not ready to provide frames
@@ -81,6 +84,8 @@ class EffectsSDKCameraCapturer(
         context: Context?,
         observer: CapturerObserver?
     ) {
+        cameraThreadHandler = surfaceTextureHelper?.handler
+        
         if (!isPipelineCameraUsed) {
             //Custom Capturer observer. Used until EffectsSDK not ready to provide frames
             val nativeCapturerObserver = object : CapturerObserver {
@@ -122,7 +127,11 @@ class EffectsSDKCameraCapturer(
             cameraPipeline?.release()
             cameraPipeline = null
         }
-        eventsHandler.onCameraClosed()
+        
+        // Call onCameraClosed on the camera thread
+        cameraThreadHandler?.post {
+            eventsHandler.onCameraClosed()
+        } ?: eventsHandler.onCameraClosed()
     }
 
     private fun createPipeline(width: Int = 1280, height: Int = 720) {
