@@ -12,6 +12,6 @@ examples/GumTestApp_macOS/package-lock.json
 *.jar
 *.tgz
 *.zip
-lib/
+# lib/ TODO: remove onced published to npm
 src/*.js
 
