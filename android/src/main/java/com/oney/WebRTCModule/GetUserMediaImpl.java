@@ -48,9 +48,6 @@ class GetUserMediaImpl {
     private static final int PERMISSION_REQUEST_CODE = (int) (Math.random() * Short.MAX_VALUE);
     
     private static final Map<String, EffectsSDKCameraCapturer> effectsSDKCapturerMap = new ConcurrentHashMap<>();
-    
-    // Keep track of the last EffectsSDK capturer for reuse
-    private static EffectsSDKCameraCapturer lastEffectsSDKCapturer = null;
 
     private CameraEnumerator cameraEnumerator;
     private final ReactApplicationContext reactContext;
@@ -297,44 +294,46 @@ class GetUserMediaImpl {
             CameraCaptureController videoCaptureController = new CameraCaptureController(
                     reactContext.getCurrentActivity(), getCameraEnumerator(), videoConstraintsMap);
             
-            boolean hasExistingEffectsSDK = !effectsSDKCapturerMap.isEmpty();
-            boolean shouldUseEffectsSDK = effectsSdkRequired || (lastEffectsSDKCapturer != null) || hasExistingEffectsSDK;
-
-            if (shouldUseEffectsSDK) {
-                VideoCapturer effectsSDKCapturer = null;
+            if (effectsSdkRequired) {
+                // Create new EffectsSDK capturer only when explicitly required
+                String cameraName = getCameraNameFromConstraints(videoConstraintsMap);
                 
-                if (lastEffectsSDKCapturer != null) {
-                    effectsSDKCapturer = lastEffectsSDKCapturer;
-                    lastEffectsSDKCapturer = null; // Clear it so it's not reused again
-                } else if (hasExistingEffectsSDK) {
-                    EffectsSDKCameraCapturer existingCapturer = effectsSDKCapturerMap.values().iterator().next();
-                    effectsSDKCapturer = existingCapturer;
-                } else {
-                    // Create new EffectsSDK capturer
-                    String cameraName = getCameraNameFromConstraints(videoConstraintsMap);
+                if (cameraName != null) {
+                    CameraVideoCapturer.CameraEventsHandler cameraEventsHandler = new CameraVideoCapturer.CameraEventsHandler() {
+                        @Override
+                        public void onCameraError(String errorDescription) {
+                            Log.e(TAG, "EffectsSDK camera error: " + errorDescription);
+                        }
+                        @Override
+                        public void onCameraDisconnected() {
+                            Log.d(TAG, "EffectsSDK camera disconnected");
+                        }
+                        @Override
+                        public void onCameraFreezed(String errorDescription) {
+                            Log.w(TAG, "EffectsSDK camera freezed: " + errorDescription);
+                        }
+                        @Override
+                        public void onCameraOpening(String cameraName) {
+                            Log.d(TAG, "EffectsSDK camera opening: " + cameraName);
+                        }
+                        @Override
+                        public void onFirstFrameAvailable() {
+                            Log.d(TAG, "EffectsSDK first frame available");
+                        }
+                        @Override
+                        public void onCameraClosed() {
+                            Log.d(TAG, "EffectsSDK camera closed");
+                        }
+                    };
                     
-                    if (cameraName != null) {
-                        CameraVideoCapturer.CameraEventsHandler cameraEventsHandler = new CameraVideoCapturer.CameraEventsHandler() {
-                            @Override
-                            public void onCameraError(String errorDescription) {}
-                            @Override
-                            public void onCameraDisconnected() {}
-                            @Override
-                            public void onCameraFreezed(String errorDescription) {}
-                            @Override
-                            public void onCameraOpening(String cameraName) {}
-                            @Override
-                            public void onFirstFrameAvailable() {}
-                            @Override
-                            public void onCameraClosed() {}
-                        };
-                        
-                        effectsSDKCapturer = createEffectsSDKVideoCapturer(cameraName, cameraEventsHandler);
+                    VideoCapturer effectsSDKCapturer = createEffectsSDKVideoCapturer(cameraName, cameraEventsHandler);
+                    if (effectsSDKCapturer != null) {
+                        videoCaptureController.videoCapturer = effectsSDKCapturer;
+                    } else {
+                        Log.e(TAG, "Failed to create EffectsSDK capturer, falling back to standard capturer");
                     }
-                }
-                
-                if (effectsSDKCapturer != null) {
-                    videoCaptureController.videoCapturer = effectsSDKCapturer;
+                } else {
+                    Log.w(TAG, "No camera found for EffectsSDK capturer");
                 }
             }
             
@@ -373,11 +372,10 @@ class GetUserMediaImpl {
     void disposeTrack(String id) {
         TrackPrivate track = tracks.remove(id);
         if (track != null) {
-            EffectsSDKCameraCapturer capturer = effectsSDKCapturerMap.get(id);
+            EffectsSDKCameraCapturer capturer = effectsSDKCapturerMap.remove(id);
             if (capturer != null) {
-                lastEffectsSDKCapturer = capturer; // Save for reuse
+                Log.d(TAG, "Removing EffectsSDK capturer for track: " + id);
             }
-            effectsSDKCapturerMap.remove(id);
             
             track.dispose();
         }

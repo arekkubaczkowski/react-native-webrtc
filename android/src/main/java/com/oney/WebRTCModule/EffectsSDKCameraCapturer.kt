@@ -30,9 +30,9 @@ import kotlin.coroutines.suspendCoroutine
  * Custom video capturer for Effects SDK
  */
 class EffectsSDKCameraCapturer(
-    private val device: String,
+    private var device: String,
     private val eventsHandler: CameraEventsHandler,
-    enumerator: CameraEnumerator
+    private val enumerator: CameraEnumerator
 ) : CameraVideoCapturer {
 
     private var isPipelineCameraUsed: Boolean = false
@@ -47,6 +47,8 @@ class EffectsSDKCameraCapturer(
     private var defaultPipelineOptions = EffectsSdkOptionsCache()
     private var currentPipelineOptions = EffectsSdkOptionsCache()
     private var cameraThreadHandler: Handler? = null
+    private var currentWidth: Int = 1280
+    private var currentHeight: Int = 720
 
     init {
         //Custom event handler. Used until EffectsSDK not ready to provide frames
@@ -110,11 +112,15 @@ class EffectsSDKCameraCapturer(
 
 
     override fun startCapture(width: Int, height: Int, framerate: Int) {
+        currentWidth = width
+        currentHeight = height
+        
         if (!isPipelineCameraUsed) {
             webRtcCameraCapturer?.startCapture(width, height, framerate)
         } else {
-            createPipeline(height, width)
+            createPipeline(width, height)
             cameraPipeline?.startPipeline()
+            cameraPipeline?.setFlipX(false)
             cameraPipeline?.setOnFrameAvailableListener(onFrameAvailableListener)
         }
     }
@@ -136,9 +142,10 @@ class EffectsSDKCameraCapturer(
 
     private fun createPipeline(width: Int = 1280, height: Int = 720) {
         val factory = EffectsSDK.createSDKFactory()
+        val isFrontCamera = device == "1"
         cameraPipeline = factory.createCameraPipeline(
             context!!,
-            camera = if (device == "1") Camera.FRONT else Camera.BACK,
+            camera = if (isFrontCamera) Camera.FRONT else Camera.BACK,
             resolution = Size(width, height)
         )
         setPipelineOptionsFromCache(currentPipelineOptions)
@@ -158,8 +165,18 @@ class EffectsSDKCameraCapturer(
     }
 
     override fun changeCaptureFormat(width: Int, height: Int, framerate: Int) {
+        currentWidth = width
+        currentHeight = height
+        
         if (!isPipelineCameraUsed) {
             webRtcCameraCapturer?.changeCaptureFormat(width, height, framerate)
+        } else {
+            cameraPipeline?.setOnFrameAvailableListener(null)
+            cameraPipeline?.release()
+            createPipeline(width, height)
+            cameraPipeline?.startPipeline()
+            cameraPipeline?.setFlipX(false)
+            cameraPipeline?.setOnFrameAvailableListener(onFrameAvailableListener)
         }
     }
 
@@ -262,9 +279,9 @@ class EffectsSDKCameraCapturer(
             }
         }
         if (result == EffectsSDKStatus.ACTIVE) {
-            createPipeline()
+            createPipeline(currentWidth, currentHeight)
             cameraPipeline?.startPipeline()
-            cameraPipeline?.setFlipX(true)
+            cameraPipeline?.setFlipX(false)
             cameraPipeline?.setOnFrameAvailableListener(onFrameAvailableListener)
         }
         return result
@@ -292,7 +309,6 @@ class EffectsSDKCameraCapturer(
 
     fun setPipelineMode(pipelineMode: String) {
         var value: String = pipelineMode.split('.')[1]
-        if (value == "noEffects") value = "no_effect"
         val mode: PipelineMode = PipelineMode.valueOf(value.uppercase())
         currentPipelineOptions.pipelineMode = mode
         cameraPipeline?.setMode(mode)
@@ -388,6 +404,7 @@ class EffectsSDKCameraCapturer(
             pipeline.setColorFilterStrength(cache.colorFilterStrength)
             pipeline.setSharpeningStrength(cache.sharpeningStrength)
             pipeline.setZoomLevel(cache.zoomLevel)
+            pipeline.setFlipX(false)
             cache.backgroundBitmap?.let { img -> pipeline.setBackground(img) }
             cache.colorGradingReference?.let { img -> pipeline.setColorGradingReferenceImage(img) }
         }
