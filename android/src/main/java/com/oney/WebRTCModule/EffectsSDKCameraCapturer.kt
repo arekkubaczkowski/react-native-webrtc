@@ -264,7 +264,7 @@ class EffectsSDKCameraCapturer(
         if (result == EffectsSDKStatus.ACTIVE) {
             createPipeline()
             cameraPipeline?.startPipeline()
-            cameraPipeline?.setFlipX(false)
+            cameraPipeline?.setFlipX(true)
             cameraPipeline?.setOnFrameAvailableListener(onFrameAvailableListener)
         }
         return result
@@ -406,5 +406,4 @@ class EffectsSDKCameraCapturer(
         var backgroundBitmap: Bitmap? = null,
         var colorGradingReference: Bitmap? = null
     )
-
 }
