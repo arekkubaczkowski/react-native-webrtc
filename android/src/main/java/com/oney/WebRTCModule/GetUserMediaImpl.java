@@ -293,51 +293,65 @@ class GetUserMediaImpl {
         if (constraints.hasKey("video")) {
             ReadableMap videoConstraintsMap = constraints.getMap("video");
 
-            boolean effectsSdkRequired = getEffectsSDKConstraint(videoConstraintsMap);
-
             CameraCaptureController videoCaptureController = new CameraCaptureController(
                     reactContext.getCurrentActivity(), getCameraEnumerator(), videoConstraintsMap);
             
-            if (effectsSdkRequired) {
-                // Create new EffectsSDK capturer only when explicitly required
-                String cameraName = getCameraNameFromConstraints(videoConstraintsMap);
+            boolean effectsSdkRequired = getEffectsSDKConstraint(videoConstraintsMap);
+            boolean hasExistingEffectsSDK = !effectsSDKCapturerMap.isEmpty();
+            boolean shouldUseEffectsSDK = effectsSdkRequired || hasExistingEffectsSDK;
+
+            if (shouldUseEffectsSDK) {
+                VideoCapturer effectsSDKCapturer = null;
                 
-                if (cameraName != null) {
-                    CameraVideoCapturer.CameraEventsHandler cameraEventsHandler = new CameraVideoCapturer.CameraEventsHandler() {
-                        @Override
-                        public void onCameraError(String errorDescription) {
-                            Log.e(TAG, "EffectsSDK camera error: " + errorDescription);
-                        }
-                        @Override
-                        public void onCameraDisconnected() {
-                            Log.d(TAG, "EffectsSDK camera disconnected");
-                        }
-                        @Override
-                        public void onCameraFreezed(String errorDescription) {
-                            Log.w(TAG, "EffectsSDK camera freezed: " + errorDescription);
-                        }
-                        @Override
-                        public void onCameraOpening(String cameraName) {
-                            Log.d(TAG, "EffectsSDK camera opening: " + cameraName);
-                        }
-                        @Override
-                        public void onFirstFrameAvailable() {
-                            Log.d(TAG, "EffectsSDK first frame available");
-                        }
-                        @Override
-                        public void onCameraClosed() {
-                            Log.d(TAG, "EffectsSDK camera closed");
-                        }
-                    };
+                if (hasExistingEffectsSDK) {
+                    Log.d(TAG, "Reusing existing EffectsSDK capturer from map");
+                    effectsSDKCapturer = effectsSDKCapturerMap.values().iterator().next();
+                } 
+                else if (effectsSdkRequired) {
+                    String cameraName = getCameraNameFromConstraints(videoConstraintsMap);
                     
-                    VideoCapturer effectsSDKCapturer = createEffectsSDKVideoCapturer(cameraName, cameraEventsHandler);
-                    if (effectsSDKCapturer != null) {
-                        videoCaptureController.videoCapturer = effectsSDKCapturer;
+                    if (cameraName != null) {
+                        Log.d(TAG, "Creating new EffectsSDK capturer for camera: " + cameraName);
+                        
+                        CameraVideoCapturer.CameraEventsHandler cameraEventsHandler = new CameraVideoCapturer.CameraEventsHandler() {
+                            @Override
+                            public void onCameraError(String errorDescription) {
+                                Log.e(TAG, "EffectsSDK camera error: " + errorDescription);
+                            }
+                            @Override
+                            public void onCameraDisconnected() {
+                                Log.w(TAG, "EffectsSDK camera disconnected");
+                            }
+                            @Override
+                            public void onCameraFreezed(String errorDescription) {
+                                Log.w(TAG, "EffectsSDK camera freezed: " + errorDescription);
+                            }
+                            @Override
+                            public void onCameraOpening(String cameraName) {
+                                Log.d(TAG, "EffectsSDK camera opening: " + cameraName);
+                            }
+                            @Override
+                            public void onFirstFrameAvailable() {
+                                Log.d(TAG, "EffectsSDK first frame available");
+                            }
+                            @Override
+                            public void onCameraClosed() {
+                                Log.d(TAG, "EffectsSDK camera closed");
+                            }
+                        };
+                        
+                        effectsSDKCapturer = createEffectsSDKVideoCapturer(cameraName, cameraEventsHandler);
+                        
+                        if (effectsSDKCapturer == null) {
+                            Log.e(TAG, "Failed to create EffectsSDK capturer, falling back to standard capturer");
+                        }
                     } else {
-                        Log.e(TAG, "Failed to create EffectsSDK capturer, falling back to standard capturer");
+                        Log.w(TAG, "No camera found for EffectsSDK capturer");
                     }
-                } else {
-                    Log.w(TAG, "No camera found for EffectsSDK capturer");
+                }
+                
+                if (effectsSDKCapturer != null) {
+                    videoCaptureController.videoCapturer = effectsSDKCapturer;
                 }
             }
             
@@ -373,14 +387,92 @@ class GetUserMediaImpl {
         }
     }
 
+     void switchCamera(String trackId) {
+        EffectsSDKCameraCapturer effectsSDKCapturer = effectsSDKCapturerMap.get(trackId);
+        if (effectsSDKCapturer != null) {
+            switchEffectsSDKCamera(effectsSDKCapturer);
+            return;
+        }
+        
+        TrackPrivate trackPrivate = tracks.get(trackId);
+        if (trackPrivate == null || !(trackPrivate.videoCaptureController instanceof CameraCaptureController)) {
+            return;
+        }
+        
+        CameraCaptureController controller = (CameraCaptureController) trackPrivate.videoCaptureController;
+        VideoCapturer videoCapturer = controller.videoCapturer;
+        
+        if (!(videoCapturer instanceof CameraVideoCapturer)) {
+            return;
+        }
+        
+        switchStandardCamera((CameraVideoCapturer) videoCapturer, controller.getDeviceId());
+    }
+    
+    
+    private void switchEffectsSDKCamera(EffectsSDKCameraCapturer capturer) {
+        String[] deviceNames = getCameraEnumerator().getDeviceNames();
+        String currentDevice = capturer.getCurrentDevice();
+        Log.d(TAG, "Current EffectsSDK camera device: " + currentDevice);
+        
+        // Find opposite camera
+        for (String deviceName : deviceNames) {
+            if (!deviceName.equals(currentDevice)) {
+                try {
+                    Log.d(TAG, "Switching EffectsSDK camera from " + currentDevice + " to " + deviceName);
+                    capturer.switchCamera(new CameraVideoCapturer.CameraSwitchHandler() {
+                        @Override
+                        public void onCameraSwitchDone(boolean isFrontCamera) {
+                            Log.d(TAG, "EffectsSDK camera switch successful, now using: " + (isFrontCamera ? "front" : "back"));
+                        }
+                        
+                        @Override
+                        public void onCameraSwitchError(String error) {
+                            Log.e(TAG, "EffectsSDK camera switch failed: " + error);
+                        }
+                    }, deviceName);
+                    return;
+                } catch (Exception e) {
+                    Log.w(TAG, "Failed to switch to device " + deviceName + ": " + e.getMessage());
+                }
+            }
+        }
+        Log.w(TAG, "No opposite camera found for current device: " + currentDevice);
+    }
+    
+    
+    private void switchStandardCamera(CameraVideoCapturer capturer, String currentDeviceId) {
+        String[] deviceNames = getCameraEnumerator().getDeviceNames();
+        boolean currentIsFrontFacing = false;
+        
+        try {
+            currentIsFrontFacing = getCameraEnumerator().isFrontFacing(currentDeviceId);
+        } catch (Exception e) {
+            // Use default value
+        }
+        
+        for (String deviceName : deviceNames) {
+            try {
+                boolean isFrontFacing = getCameraEnumerator().isFrontFacing(deviceName);
+                if (isFrontFacing != currentIsFrontFacing) {
+                    capturer.switchCamera(new CameraVideoCapturer.CameraSwitchHandler() {
+                        @Override
+                        public void onCameraSwitchDone(boolean isFrontCamera) {}
+                        
+                        @Override
+                        public void onCameraSwitchError(String error) {}
+                    }, deviceName);
+                    return;
+                }
+            } catch (Exception e) {
+                // Continue to next camera
+            }
+        }
+    }
+
     void disposeTrack(String id) {
         TrackPrivate track = tracks.remove(id);
         if (track != null) {
-            EffectsSDKCameraCapturer capturer = effectsSDKCapturerMap.remove(id);
-            if (capturer != null) {
-                Log.d(TAG, "Removing EffectsSDK capturer for track: " + id);
-            }
-            
             track.dispose();
         }
     }

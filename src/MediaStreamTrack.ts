@@ -142,6 +142,22 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
         this._setVideoEffects([ name ]);
     }
 
+     /**
+     * Switch camera on existing track (Flutter WebRTC pattern)
+     * This avoids creating new tracks and is EffectsSDK compatible
+     */
+    async switchCameraNative(): Promise<boolean> {
+        if (this.remote) {
+            throw new Error('Not implemented for remote tracks');
+        }
+
+        if (this.kind !== 'video') {
+            throw new Error('Only implemented for video tracks');
+        }
+
+        return WebRTCModule.switchCamera(this.id);
+    }
+
     /**
      * Initialize EffectsSDK for this video track
      */
