@@ -172,6 +172,10 @@ class GetUserMediaImpl {
         }
         return EffectsSDKStatus.INACTIVE;
     }
+
+    public boolean isInitialized(String trackId) {
+        return effectsSDKCapturerMap.containsKey(trackId);
+    }
     
     private EffectsSDKCameraCapturer getEffectsSdkVideoCapturer(String trackId) {
         EffectsSDKCameraCapturer capturer = effectsSDKCapturerMap.get(trackId);
@@ -593,88 +597,6 @@ class GetUserMediaImpl {
         }
     }
 
-    void switchCamera(String trackId) {
-        EffectsSDKCameraCapturer effectsSDKCapturer = effectsSDKCapturerMap.get(trackId);
-        if (effectsSDKCapturer != null) {
-            switchEffectsSDKCamera(effectsSDKCapturer);
-            return;
-        }
-        
-        TrackPrivate trackPrivate = tracks.get(trackId);
-        if (trackPrivate == null || !(trackPrivate.videoCaptureController instanceof CameraCaptureController)) {
-            return;
-        }
-        
-        CameraCaptureController controller = (CameraCaptureController) trackPrivate.videoCaptureController;
-        VideoCapturer videoCapturer = controller.videoCapturer;
-        
-        if (!(videoCapturer instanceof CameraVideoCapturer)) {
-            return;
-        }
-        
-        switchStandardCamera((CameraVideoCapturer) videoCapturer, controller.getDeviceId());
-    }
-    
-    
-    private void switchEffectsSDKCamera(EffectsSDKCameraCapturer capturer) {
-        String[] deviceNames = getCameraEnumerator().getDeviceNames();
-        String currentDevice = capturer.getCurrentDevice();
-        Log.d(TAG, "Current EffectsSDK camera device: " + currentDevice);
-        
-        // Find opposite camera
-        for (String deviceName : deviceNames) {
-            if (!deviceName.equals(currentDevice)) {
-                try {
-                    Log.d(TAG, "Switching EffectsSDK camera from " + currentDevice + " to " + deviceName);
-                    capturer.switchCamera(new CameraVideoCapturer.CameraSwitchHandler() {
-                        @Override
-                        public void onCameraSwitchDone(boolean isFrontCamera) {
-                            Log.d(TAG, "EffectsSDK camera switch successful, now using: " + (isFrontCamera ? "front" : "back"));
-                        }
-                        
-                        @Override
-                        public void onCameraSwitchError(String error) {
-                            Log.e(TAG, "EffectsSDK camera switch failed: " + error);
-                        }
-                    }, deviceName);
-                    return;
-                } catch (Exception e) {
-                    Log.w(TAG, "Failed to switch to device " + deviceName + ": " + e.getMessage());
-                }
-            }
-        }
-        Log.w(TAG, "No opposite camera found for current device: " + currentDevice);
-    }
-    
-    
-    private void switchStandardCamera(CameraVideoCapturer capturer, String currentDeviceId) {
-        String[] deviceNames = getCameraEnumerator().getDeviceNames();
-        boolean currentIsFrontFacing = false;
-        
-        try {
-            currentIsFrontFacing = getCameraEnumerator().isFrontFacing(currentDeviceId);
-        } catch (Exception e) {
-            // Use default value
-        }
-        
-        for (String deviceName : deviceNames) {
-            try {
-                boolean isFrontFacing = getCameraEnumerator().isFrontFacing(deviceName);
-                if (isFrontFacing != currentIsFrontFacing) {
-                    capturer.switchCamera(new CameraVideoCapturer.CameraSwitchHandler() {
-                        @Override
-                        public void onCameraSwitchDone(boolean isFrontCamera) {}
-                        
-                        @Override
-                        public void onCameraSwitchError(String error) {}
-                    }, deviceName);
-                    return;
-                }
-            } catch (Exception e) {
-                // Continue to next camera
-            }
-        }
-    }
 
     /**
      * Application/library-specific private members of local

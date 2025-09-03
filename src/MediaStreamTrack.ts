@@ -174,6 +174,21 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
+     * Check if EffectsSDK is initialized for this video track
+     */
+    async isInitialized(): Promise<boolean> {
+        if (this.remote) {
+            throw new Error('Not implemented for remote tracks');
+        }
+
+        if (this.kind !== 'video') {
+            throw new Error('Only implemented for video tracks');
+        }
+
+        return WebRTCModule.isInitialized(this.id);
+    }
+
+    /**
      * Set EffectsSDK pipeline mode
      */
     setEffectsSdkPipelineMode(pipelineMode: string): void {

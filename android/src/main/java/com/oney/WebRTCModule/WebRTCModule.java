@@ -979,6 +979,18 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
             }
         });
     }
+
+    @ReactMethod
+    public void isInitialized(String trackId, Promise promise) {
+        ThreadUtils.runOnExecutor(() -> {
+            try {
+                boolean initialized = getUserMediaImpl.isInitialized(trackId);
+                promise.resolve(initialized);
+            } catch (Exception e) {
+                promise.reject("EFFECTS_SDK_IS_INITIALIZED_ERROR", e.getMessage(), e);
+            }
+        });
+    }
     
     @ReactMethod
     public void setEffectsSdkPipelineMode(String trackId, String pipelineMode) {
