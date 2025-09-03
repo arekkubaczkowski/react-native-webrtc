@@ -63,6 +63,10 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
      */
     initializeEffectsSDK(customerId: string, url?: string): Promise<string>;
     /**
+     * Check if EffectsSDK is initialized for this video track
+     */
+    isInitialized(): Promise<boolean>;
+    /**
      * Set EffectsSDK pipeline mode
      */
     setEffectsSdkPipelineMode(pipelineMode: string): void;
