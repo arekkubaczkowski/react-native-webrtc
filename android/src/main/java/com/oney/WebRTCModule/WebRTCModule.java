@@ -957,18 +957,6 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
     }
 
     @ReactMethod
-    public void switchCamera(String trackId, Promise promise) {
-        ThreadUtils.runOnExecutor(() -> {
-            try {
-                getUserMediaImpl.switchCamera(trackId);
-                promise.resolve(true);
-            } catch (Exception e) {
-                promise.reject("CAMERA_SWITCH_ERROR", e.getMessage(), e);
-            }
-        });
-    }
-    
-    @ReactMethod
     public void initializeEffectsSdk(String trackId, String customerId, String url, Promise promise) {
         ThreadUtils.runOnExecutor(() -> {
             try {
