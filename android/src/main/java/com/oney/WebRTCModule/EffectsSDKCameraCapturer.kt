@@ -2,6 +2,7 @@ package com.oney.WebRTCModule
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -120,7 +121,6 @@ class EffectsSDKCameraCapturer(
         } else {
             createPipeline(width, height)
             cameraPipeline?.startPipeline()
-            cameraPipeline?.setFlipX(false)
             cameraPipeline?.setOnFrameAvailableListener(onFrameAvailableListener)
         }
     }
@@ -142,7 +142,13 @@ class EffectsSDKCameraCapturer(
 
     private fun createPipeline(width: Int = 1280, height: Int = 720) {
         val factory = EffectsSDK.createSDKFactory()
-        val isFrontCamera = device == "1"
+        val isFrontCamera = try {
+            enumerator.isFrontFacing(device)
+        } catch (e: Exception) {
+            Log.e("EffectsSDKCameraCapturer", "Failed to determine camera facing mode for device: $device", e)
+            false
+        }
+        
         cameraPipeline = factory.createCameraPipeline(
             context!!,
             camera = if (isFrontCamera) Camera.FRONT else Camera.BACK,
@@ -175,7 +181,6 @@ class EffectsSDKCameraCapturer(
             cameraPipeline?.release()
             createPipeline(width, height)
             cameraPipeline?.startPipeline()
-            cameraPipeline?.setFlipX(false)
             cameraPipeline?.setOnFrameAvailableListener(onFrameAvailableListener)
         }
     }
@@ -205,6 +210,13 @@ class EffectsSDKCameraCapturer(
             webRtcCameraCapturer?.switchCamera(switchEventsHandler, p1)
         }
         switchEventsHandler?.onCameraSwitchDone(true)
+    }
+
+    private fun flipBitmapHorizontally(bitmap: Bitmap): Bitmap {
+        val matrix = Matrix().apply { 
+            postScale(-1f, 1f, bitmap.width / 2f, bitmap.height / 2f) 
+        }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, false)
     }
 
     private fun getNV21(scaled: Bitmap): ByteArray {
@@ -256,12 +268,19 @@ class EffectsSDKCameraCapturer(
             webRtcCameraCapturer?.dispose()
             webRtcCameraCapturer = null
         }
+        val processedBitmap = if (enumerator.isFrontFacing(device)) {
+            Log.d("EffectsSDKCameraCapturer", "Manually flipping bitmap for front camera")
+            flipBitmapHorizontally(bitmap)
+        } else {
+            bitmap
+        }
+        
         val videoFrame = VideoFrame(
             NV21Buffer(
-                getNV21(bitmap),
-                bitmap.width,
-                bitmap.height,
-                { bitmap.recycle() }
+                getNV21(processedBitmap),
+                processedBitmap.width,
+                processedBitmap.height,
+                { processedBitmap.recycle() }
             ),
             0,
             timestamp * 1_000_000 //millisectonds to nanoseconds
@@ -281,7 +300,6 @@ class EffectsSDKCameraCapturer(
         if (result == EffectsSDKStatus.ACTIVE) {
             createPipeline(currentWidth, currentHeight)
             cameraPipeline?.startPipeline()
-            cameraPipeline?.setFlipX(false)
             cameraPipeline?.setOnFrameAvailableListener(onFrameAvailableListener)
         }
         return result
@@ -305,6 +323,34 @@ class EffectsSDKCameraCapturer(
 
     fun getCurrentDevice(): String {
         return device
+    }
+
+    fun switchCameraDevice(newDeviceName: String, switchEventsHandler: CameraVideoCapturer.CameraSwitchHandler?) {
+        if (isPipelineCameraUsed && cameraPipeline != null) {
+            try {
+                cameraPipeline?.setOnFrameAvailableListener(null)
+                cameraPipeline?.release()
+                
+                device = newDeviceName
+                
+                createPipeline(currentWidth, currentHeight)
+                cameraPipeline?.startPipeline()
+                cameraPipeline?.setOnFrameAvailableListener(onFrameAvailableListener)
+                
+                setPipelineOptionsFromCache(currentPipelineOptions)
+                
+                val isFrontFacing = enumerator.isFrontFacing(newDeviceName)
+                switchEventsHandler?.onCameraSwitchDone(isFrontFacing)
+            } catch (e: Exception) {
+                switchEventsHandler?.onCameraSwitchError("Failed to switch camera: ${e.message}")
+            }
+        } else {
+            if (!isPipelineCameraUsed) {
+                webRtcCameraCapturer?.switchCamera(switchEventsHandler, newDeviceName)
+            } else {
+                switchEventsHandler?.onCameraSwitchError("No active camera to switch")
+            }
+        }
     }
 
     fun setPipelineMode(pipelineMode: String) {
@@ -404,7 +450,7 @@ class EffectsSDKCameraCapturer(
             pipeline.setColorFilterStrength(cache.colorFilterStrength)
             pipeline.setSharpeningStrength(cache.sharpeningStrength)
             pipeline.setZoomLevel(cache.zoomLevel)
-            pipeline.setFlipX(false)
+
             cache.backgroundBitmap?.let { img -> pipeline.setBackground(img) }
             cache.colorGradingReference?.let { img -> pipeline.setColorGradingReferenceImage(img) }
         }
