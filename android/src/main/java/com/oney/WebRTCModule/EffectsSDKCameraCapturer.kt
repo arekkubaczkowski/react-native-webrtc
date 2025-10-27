@@ -375,9 +375,9 @@ class EffectsSDKCameraCapturer(
     }
 
     fun setBeautificationPower(power: Double) {
-        val intValue = (power * 100).toInt()
-        currentPipelineOptions.beautificationPower = intValue
-        cameraPipeline?.setBeautificationPower(intValue)
+        val floatValue = (power * 100).toFloat()
+        currentPipelineOptions.beautificationPower = floatValue
+        cameraPipeline?.setBeautificationPower(floatValue)
     }
 
     fun getZoomLevel(): Double {
@@ -462,7 +462,7 @@ class EffectsSDKCameraCapturer(
         var colorCorrectionMode: ColorCorrectionMode = ColorCorrectionMode.NO_FILTER_MODE,
         var isSharpeningEnabled: Boolean = false,
         var isBeautificationEnabled: Boolean = false,
-        var beautificationPower: Int = 0,
+        var beautificationPower: Float = 0f,
         var colorFilterStrength: Float = 0f,
         var sharpeningStrength: Float = 0f,
         var zoomLevel: Int = 0,
