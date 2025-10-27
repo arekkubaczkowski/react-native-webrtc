@@ -34,7 +34,7 @@ dependencies {
     implementation "com.facebook.react:react-android:+"
     api 'io.github.webrtc-sdk:android:137.7151.01'
     implementation "androidx.core:core:1.7.0"
-    implementation files('./libs/Effects_SDK_v.2.11.4.aar')
+    implementation files('./libs/Effects_SDK_v.2.13.0.aar')
     
     // Kotlin support
     implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.10"
