@@ -1,4 +1,4 @@
-import { ViewProps } from 'react-native';
+import { ViewProps } from "react-native";
 /**
  * Native prop validation was removed from RN in:
  * https://github.com/facebook/react-native/commit/8dc3ba0444c94d9bbb66295b5af885bff9b9cd34
@@ -6,6 +6,10 @@ import { ViewProps } from 'react-native';
  * So we list them here for documentation purposes.
  */
 export interface RTCVideoViewProps extends ViewProps {
+    customScale?: number;
+    customTranslateX?: number;
+    customTranslateY?: number;
+    useCustomTransform?: boolean;
     /**
      * Indicates whether the video specified by {@link #streamURL} should be
      * mirrored during rendering. Commonly, applications choose to mirror the
@@ -24,7 +28,7 @@ export interface RTCVideoViewProps extends ViewProps {
      *
      * Defaults to 'cover'.
      */
-    objectFit?: 'contain' | 'cover';
+    objectFit?: "contain" | "cover";
     /**
      * URL / id of the stream that should be rendered.
      *

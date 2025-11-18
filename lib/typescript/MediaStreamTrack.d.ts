@@ -54,6 +54,11 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     _setVideoEffects(names: string[]): void;
     _setVideoEffect(name: string): void;
     /**
+    * Switch camera on existing track (Flutter WebRTC pattern)
+    * This avoids creating new tracks and is EffectsSDK compatible
+    */
+    switchCameraNative(): Promise<boolean>;
+    /**
      * Initialize EffectsSDK for this video track
      */
     initializeEffectsSDK(customerId: string, url?: string): Promise<string>;
