@@ -19,10 +19,11 @@ import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.UiThreadUtil;
 import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
+import com.oney.WebRTCModule.videoEffects.CapturerFactoryInterface;
+import com.oney.WebRTCModule.videoEffects.CapturerProvider;
 import com.oney.WebRTCModule.videoEffects.ProcessorProvider;
 import com.oney.WebRTCModule.videoEffects.VideoEffectProcessor;
 import com.oney.WebRTCModule.videoEffects.VideoFrameProcessor;
-import com.effectssdk.tsvb.EffectsSDKStatus;
 
 import org.webrtc.*;
 
@@ -47,7 +48,7 @@ class GetUserMediaImpl {
 
     private static final int PERMISSION_REQUEST_CODE = (int) (Math.random() * Short.MAX_VALUE);
     
-    private static EffectsSDKCameraCapturer globalEffectsSDKCapturer = null;
+    private static VideoCapturer globalCustomCapturer = null;
 
     private CameraEnumerator cameraEnumerator;
     private final ReactApplicationContext reactContext;
@@ -156,29 +157,12 @@ class GetUserMediaImpl {
         return false;
     }
 
-    private VideoCapturer createEffectsSDKVideoCapturer(String cameraName, CameraVideoCapturer.CameraEventsHandler eventsHandler) {
-        try {
-            return new EffectsSDKCameraCapturer(cameraName, eventsHandler, getCameraEnumerator());
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to create EffectsSDKVideoCapturer", e);
-            return null;
-        }
-    }
-
-    public EffectsSDKStatus initializeEffectsSdk(String trackId, String customerId, String url) {
-        EffectsSDKCameraCapturer capturer = getEffectsSdkVideoCapturer(trackId);
-        if (capturer != null) {
-            return capturer.initializeEffectsSdk(customerId, url);
-        }
-        return EffectsSDKStatus.INACTIVE;
-    }
-
-    public boolean isInitialized(String trackId) {
-        return globalEffectsSDKCapturer != null;
-    }
-    
-    private EffectsSDKCameraCapturer getEffectsSdkVideoCapturer(String trackId) {
-        return globalEffectsSDKCapturer;
+    /**
+     * Returns the global custom capturer, if any.
+     * External modules can use this to access the capturer they registered.
+     */
+    public VideoCapturer getGlobalCustomCapturer() {
+        return globalCustomCapturer;
     }
     
     private String getCameraNameFromConstraints(ReadableMap videoConstraints) {
@@ -292,60 +276,55 @@ class GetUserMediaImpl {
                     reactContext.getCurrentActivity(), getCameraEnumerator(), videoConstraintsMap);
             
             boolean effectsSdkRequired = getEffectsSDKConstraint(videoConstraintsMap);
-            boolean hasGlobalEffectsSDK = globalEffectsSDKCapturer != null;
-            
-            if (effectsSdkRequired || hasGlobalEffectsSDK) {
-                VideoCapturer effectsSDKCapturer = null;
-                
-                if (hasGlobalEffectsSDK) {
-                    Log.d(TAG, "Reusing global EffectsSDK capturer");
-                    effectsSDKCapturer = globalEffectsSDKCapturer;
-                } else if (effectsSdkRequired) {
+            boolean hasGlobalCustomCapturer = globalCustomCapturer != null;
+
+            if (effectsSdkRequired || hasGlobalCustomCapturer) {
+                VideoCapturer customCapturer = null;
+
+                if (hasGlobalCustomCapturer) {
+                    Log.d(TAG, "Reusing global custom capturer");
+                    customCapturer = globalCustomCapturer;
+                } else if (effectsSdkRequired && CapturerProvider.hasFactory()) {
                     String cameraName = getCameraNameFromConstraints(videoConstraintsMap);
-                    
+
                     if (cameraName != null) {
-                        Log.d(TAG, "Creating new global EffectsSDK capturer for camera: " + cameraName);
-                        
+                        Log.d(TAG, "Creating custom capturer via CapturerProvider for camera: " + cameraName);
+
                         CameraVideoCapturer.CameraEventsHandler cameraEventsHandler = new CameraVideoCapturer.CameraEventsHandler() {
-                                @Override
-                                public void onCameraError(String errorDescription) {
-                                    Log.e(TAG, "EffectsSDK camera error: " + errorDescription);
-                                }
-                                @Override
-                                public void onCameraDisconnected() {
-                                    Log.w(TAG, "EffectsSDK camera disconnected");
-                                }
-                                @Override
-                                public void onCameraFreezed(String errorDescription) {
-                                    Log.w(TAG, "EffectsSDK camera freezed: " + errorDescription);
-                                }
-                                @Override
-                                public void onCameraOpening(String cameraName) {
-                                    Log.d(TAG, "EffectsSDK camera opening: " + cameraName);
-                                }
-                                @Override
-                                public void onFirstFrameAvailable() {
-                                    Log.d(TAG, "EffectsSDK first frame available");
-                                }
-                                @Override
-                                public void onCameraClosed() {
-                                    Log.d(TAG, "EffectsSDK camera closed");
-                                }
-                            };
-                            
-                        effectsSDKCapturer = createEffectsSDKVideoCapturer(cameraName, cameraEventsHandler);
-                        
-                        if (effectsSDKCapturer instanceof EffectsSDKCameraCapturer) {
-                            globalEffectsSDKCapturer = (EffectsSDKCameraCapturer) effectsSDKCapturer;
-                            Log.d(TAG, "Stored new EffectsSDK capturer globally");
+                            @Override public void onCameraError(String errorDescription) {
+                                Log.e(TAG, "Custom capturer camera error: " + errorDescription);
+                            }
+                            @Override public void onCameraDisconnected() {
+                                Log.w(TAG, "Custom capturer camera disconnected");
+                            }
+                            @Override public void onCameraFreezed(String errorDescription) {
+                                Log.w(TAG, "Custom capturer camera freezed: " + errorDescription);
+                            }
+                            @Override public void onCameraOpening(String name) {
+                                Log.d(TAG, "Custom capturer camera opening: " + name);
+                            }
+                            @Override public void onFirstFrameAvailable() {
+                                Log.d(TAG, "Custom capturer first frame available");
+                            }
+                            @Override public void onCameraClosed() {
+                                Log.d(TAG, "Custom capturer camera closed");
+                            }
+                        };
+
+                        CapturerFactoryInterface factory = CapturerProvider.getFactory();
+                        customCapturer = factory.createCapturer(cameraName, cameraEventsHandler, getCameraEnumerator());
+
+                        if (customCapturer != null) {
+                            globalCustomCapturer = customCapturer;
+                            Log.d(TAG, "Stored custom capturer globally");
                         }
                     } else {
-                        Log.w(TAG, "No camera found for EffectsSDK capturer");
+                        Log.w(TAG, "No camera found for custom capturer");
                     }
                 }
-                
-                if (effectsSDKCapturer != null) {
-                    videoCaptureController.videoCapturer = effectsSDKCapturer;
+
+                if (customCapturer != null) {
+                    videoCaptureController.videoCapturer = customCapturer;
                 }
             }
             
@@ -382,54 +361,13 @@ class GetUserMediaImpl {
     }
 
     void switchCamera(String trackId) {
-        // Handle EffectsSDK capturer with direct pipeline control
-        if (globalEffectsSDKCapturer != null) {
-            CameraEnumerator cameraEnumerator = getCameraEnumerator();
-            String[] deviceNames = cameraEnumerator.getDeviceNames();
-            String currentDevice = globalEffectsSDKCapturer.getCurrentDevice();
-            
-            Log.d(TAG, "EffectsSDK switchCamera - current device: " + currentDevice + ", available devices: " + java.util.Arrays.toString(deviceNames));
-            
-            // Determine current camera facing mode once
-            boolean currentIsFrontFacing;
-            try {
-                currentIsFrontFacing = cameraEnumerator.isFrontFacing(currentDevice);
-                Log.d(TAG, "Current camera is " + (currentIsFrontFacing ? "front" : "back") + " facing");
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to determine current camera facing mode for device: " + currentDevice, e);
-                return;
-            }
-            
-            for (String deviceName : deviceNames) {
-                try {
-                    boolean deviceIsFrontFacing = cameraEnumerator.isFrontFacing(deviceName);
-                    
-                    if (deviceIsFrontFacing != currentIsFrontFacing) {
-                        globalEffectsSDKCapturer.switchCameraDevice(deviceName, new CameraVideoCapturer.CameraSwitchHandler() {
-                            @Override
-                            public void onCameraSwitchDone(boolean isFrontCamera) {
-                                Log.d(TAG, "EffectsSDK camera switch successful for track " + trackId + 
-                                          ", now using: " + (isFrontCamera ? "front" : "back") + " device: " + deviceName);
-                            }
-                            
-                            @Override
-                            public void onCameraSwitchError(String error) {
-                                Log.e(TAG, "EffectsSDK camera switch failed for track " + trackId + ": " + error);
-                            }
-                        });
-                        return;
-                    } else {
-                        Log.d(TAG, "Skipping device " + deviceName + " - same facing mode as current (" + (deviceIsFrontFacing ? "front" : "back") + ")");
-                    }
-                } catch (Exception e) {
-                    Log.w(TAG, "Failed to check facing mode for device " + deviceName + ": " + e.getMessage());
-                }
-            }
-            
-            Log.w(TAG, "No opposite camera found for EffectsSDK switch, current: " + currentDevice + " (" + (currentIsFrontFacing ? "front" : "back") + ")");
+        // Handle custom capturer (e.g., effects SDK capturer) with direct switch
+        if (globalCustomCapturer instanceof CameraVideoCapturer) {
+            CameraVideoCapturer customCameraCapturer = (CameraVideoCapturer) globalCustomCapturer;
+            switchCameraForStandardCapturer(customCameraCapturer, trackId);
             return;
         }
-        
+
         TrackPrivate trackPrivate = tracks.get(trackId);
         if (trackPrivate == null || !(trackPrivate.videoCaptureController instanceof CameraCaptureController)) {
             Log.w(TAG, "No suitable video capturer found for track: " + trackId);
@@ -485,7 +423,7 @@ class GetUserMediaImpl {
                 }
             }
             
-            Log.d(TAG, "Track disposed, global EffectsSDK capturer preserved: " + id);
+            Log.d(TAG, "Track disposed: " + id);
             
             track.dispose();
         }
@@ -767,101 +705,6 @@ class GetUserMediaImpl {
                 track.dispose();
                 disposed = true;
             }
-        }
-    }
-
-    // EffectsSDK methods
-    public void setEffectsSdkPipelineMode(String trackId, String pipelineMode) {
-        EffectsSDKCameraCapturer capturer = getEffectsSdkVideoCapturer(trackId);
-        if (capturer != null) {
-            capturer.setPipelineMode(pipelineMode);
-        }
-    }
-    
-    public void setEffectsSdkBlurPower(String trackId, double blurPower) {
-        EffectsSDKCameraCapturer capturer = getEffectsSdkVideoCapturer(trackId);
-        if (capturer != null) {
-            capturer.setBlurPower((float) blurPower);
-        }
-    }
-    
-    public void enableEffectsSdkVideoStream(String trackId, boolean enabled) {
-        EffectsSDKCameraCapturer capturer = getEffectsSdkVideoCapturer(trackId);
-        if (capturer != null) {
-            capturer.enableVideo(enabled);
-        }
-    }
-    
-    public void enableEffectsSdkBeautification(String trackId, boolean enableBeautification) {
-        EffectsSDKCameraCapturer capturer = getEffectsSdkVideoCapturer(trackId);
-        if (capturer != null) {
-            capturer.enableBeautification(enableBeautification);
-        }
-    }
-    
-    public boolean isEffectsSdkBeautificationEnabled(String trackId) {
-        EffectsSDKCameraCapturer capturer = getEffectsSdkVideoCapturer(trackId);
-        if (capturer != null) {
-            return capturer.isBeautificationEnabled();
-        }
-        return false;
-    }
-    
-    public void setEffectsSdkBeautificationPower(String trackId, double beautificationPower) {
-        EffectsSDKCameraCapturer capturer = getEffectsSdkVideoCapturer(trackId);
-        if (capturer != null) {
-            capturer.setBeautificationPower(beautificationPower);
-        }
-    }
-    
-    public void setEffectsSdkZoomLevel(String trackId, double zoomLevel) {
-        EffectsSDKCameraCapturer capturer = getEffectsSdkVideoCapturer(trackId);
-        if (capturer != null) {
-            capturer.setZoomLevel(zoomLevel);
-        }
-    }
-    
-    public double getEffectsSdkZoomLevel(String trackId) {
-        EffectsSDKCameraCapturer capturer = getEffectsSdkVideoCapturer(trackId);
-        if (capturer != null) {
-            return capturer.getZoomLevel();
-        }
-        return 0.0;
-    }
-    
-    public void enableEffectsSdkSharpening(String trackId, boolean enableSharpening) {
-        EffectsSDKCameraCapturer capturer = getEffectsSdkVideoCapturer(trackId);
-        if (capturer != null) {
-            capturer.enableSharpening(enableSharpening);
-        }
-    }
-    
-    public void setEffectsSdkSharpeningStrength(String trackId, double strength) {
-        EffectsSDKCameraCapturer capturer = getEffectsSdkVideoCapturer(trackId);
-        if (capturer != null) {
-            capturer.setSharpeningStrength(strength);
-        }
-    }
-    
-    public double getEffectsSdkSharpeningStrength(String trackId) {
-        EffectsSDKCameraCapturer capturer = getEffectsSdkVideoCapturer(trackId);
-        if (capturer != null) {
-            return capturer.getSharpeningStrength();
-        }
-        return 0.0;
-    }
-    
-    public void setEffectsSdkColorFilterStrength(String trackId, double strength) {
-        EffectsSDKCameraCapturer capturer = getEffectsSdkVideoCapturer(trackId);
-        if (capturer != null) {
-            capturer.setColorFilterStrength(strength);
-        }
-    }
-    
-    public void setEffectsSdkColorCorrectionMode(String trackId, String colorCorrectionMode) {
-        EffectsSDKCameraCapturer capturer = getEffectsSdkVideoCapturer(trackId);
-        if (capturer != null) {
-            capturer.setColorCorrectionMode(colorCorrectionMode);
         }
     }
 
