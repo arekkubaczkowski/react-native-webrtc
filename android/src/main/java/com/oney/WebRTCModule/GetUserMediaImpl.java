@@ -19,6 +19,8 @@ import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.UiThreadUtil;
 import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
+import com.oney.WebRTCModule.videoEffects.CapturerFactoryInterface;
+import com.oney.WebRTCModule.videoEffects.CapturerProvider;
 import com.oney.WebRTCModule.videoEffects.ProcessorProvider;
 import com.oney.WebRTCModule.videoEffects.VideoEffectProcessor;
 import com.oney.WebRTCModule.videoEffects.VideoFrameProcessor;
@@ -44,6 +46,8 @@ class GetUserMediaImpl {
     private static final String TAG = WebRTCModule.TAG;
 
     private static final int PERMISSION_REQUEST_CODE = (int) (Math.random() * Short.MAX_VALUE);
+
+    private static VideoCapturer globalCustomCapturer = null;
 
     private CameraEnumerator cameraEnumerator;
     private final ReactApplicationContext reactContext;
@@ -216,6 +220,45 @@ class GetUserMediaImpl {
 
             CameraCaptureController cameraCaptureController = new CameraCaptureController(
                     reactContext.getCurrentActivity(), getCameraEnumerator(), videoConstraintsMap);
+
+            boolean effectsSdkRequired = getEffectsSDKConstraint(videoConstraintsMap);
+            boolean hasGlobalCustomCapturer = globalCustomCapturer != null;
+
+            if (effectsSdkRequired || hasGlobalCustomCapturer) {
+                VideoCapturer customCapturer = null;
+
+                if (hasGlobalCustomCapturer) {
+                    Log.d(TAG, "Reusing global custom capturer");
+                    customCapturer = globalCustomCapturer;
+                } else if (CapturerProvider.hasFactory()) {
+                    String cameraName = getCameraNameFromConstraints(videoConstraintsMap);
+
+                    if (cameraName != null) {
+                        Log.d(TAG, "Creating custom capturer via CapturerProvider for: " + cameraName);
+
+                        CameraVideoCapturer.CameraEventsHandler eventsHandler = new CameraVideoCapturer.CameraEventsHandler() {
+                            @Override public void onCameraError(String err) { Log.e(TAG, "Custom capturer error: " + err); }
+                            @Override public void onCameraDisconnected() { Log.w(TAG, "Custom capturer disconnected"); }
+                            @Override public void onCameraFreezed(String err) { Log.w(TAG, "Custom capturer freezed: " + err); }
+                            @Override public void onCameraOpening(String name) { Log.d(TAG, "Custom capturer opening: " + name); }
+                            @Override public void onFirstFrameAvailable() { Log.d(TAG, "Custom capturer first frame"); }
+                            @Override public void onCameraClosed() { Log.d(TAG, "Custom capturer closed"); }
+                        };
+
+                        CapturerFactoryInterface factory = CapturerProvider.getFactory();
+                        customCapturer = factory.createCapturer(cameraName, eventsHandler, getCameraEnumerator());
+
+                        if (customCapturer != null) {
+                            globalCustomCapturer = customCapturer;
+                            Log.d(TAG, "Stored custom capturer globally");
+                        }
+                    }
+                }
+
+                if (customCapturer != null) {
+                    cameraCaptureController.videoCapturer = customCapturer;
+                }
+            }
 
             videoTrack = createVideoTrack(cameraCaptureController);
         }
@@ -530,6 +573,101 @@ class GetUserMediaImpl {
                 track.dispose();
                 disposed = true;
             }
+        }
+    }
+
+    // MARK: - CapturerProvider helpers
+
+    private boolean getEffectsSDKConstraint(ReadableMap videoConstraints) {
+        try {
+            if (videoConstraints != null && videoConstraints.hasKey("effectsSdkRequired")) {
+                return videoConstraints.getBoolean("effectsSdkRequired");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Error checking effectsSdkRequired constraint", e);
+        }
+        return false;
+    }
+
+    private String getCameraNameFromConstraints(ReadableMap videoConstraints) {
+        String[] deviceNames = getCameraEnumerator().getDeviceNames();
+
+        // Try deviceId first
+        if (videoConstraints.hasKey("deviceId")) {
+            String requestedDeviceId = videoConstraints.getString("deviceId");
+            for (String name : deviceNames) {
+                if (name.equals(requestedDeviceId)) {
+                    return name;
+                }
+            }
+        }
+
+        // Try facingMode
+        if (videoConstraints.hasKey("facingMode")) {
+            String facingMode = videoConstraints.getString("facingMode");
+            boolean wantFront = "user".equals(facingMode);
+
+            for (String name : deviceNames) {
+                try {
+                    if (getCameraEnumerator().isFrontFacing(name) == wantFront) {
+                        return name;
+                    }
+                } catch (Exception e) {
+                    continue;
+                }
+            }
+        }
+
+        // Fallback: first available camera
+        if (deviceNames.length > 0) {
+            return deviceNames[0];
+        }
+
+        return null;
+    }
+
+    public VideoCapturer getGlobalCustomCapturer() {
+        return globalCustomCapturer;
+    }
+
+    void switchCamera(String trackId) {
+        // Handle custom capturer with direct switch
+        if (globalCustomCapturer instanceof CameraVideoCapturer) {
+            CameraVideoCapturer customCapturer = (CameraVideoCapturer) globalCustomCapturer;
+            CameraEnumerator enumerator = getCameraEnumerator();
+            String[] deviceNames = enumerator.getDeviceNames();
+
+            for (String deviceName : deviceNames) {
+                try {
+                    customCapturer.switchCamera(new CameraVideoCapturer.CameraSwitchHandler() {
+                        @Override
+                        public void onCameraSwitchDone(boolean isFrontCamera) {
+                            Log.d(TAG, "Custom capturer switch done: " + (isFrontCamera ? "front" : "back"));
+                        }
+                        @Override
+                        public void onCameraSwitchError(String error) {
+                            Log.e(TAG, "Custom capturer switch error: " + error);
+                        }
+                    }, deviceName);
+                    return;
+                } catch (Exception e) {
+                    Log.w(TAG, "Failed to switch to " + deviceName, e);
+                }
+            }
+            return;
+        }
+
+        // Standard track-based camera switch
+        TrackPrivate trackPrivate = tracks.get(trackId);
+        if (trackPrivate == null || !(trackPrivate.videoCaptureController instanceof CameraCaptureController)) {
+            return;
+        }
+
+        CameraCaptureController controller = (CameraCaptureController) trackPrivate.videoCaptureController;
+        VideoCapturer videoCapturer = controller.videoCapturer;
+
+        if (videoCapturer instanceof CameraVideoCapturer) {
+            ((CameraVideoCapturer) videoCapturer).switchCamera(null);
         }
     }
 
