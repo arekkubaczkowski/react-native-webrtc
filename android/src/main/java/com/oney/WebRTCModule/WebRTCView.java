@@ -378,23 +378,25 @@ public class WebRTCView extends ViewGroup {
             } else {
                 switch (scalingType) {
                     case SCALE_ASPECT_FILL:
-                        if (useTextureView) {
-                            // TextureView: EglRenderer has no built-in scaling,
-                            // so we use getDisplaySize to compute cover bounds.
-                            // Parent's overflow:hidden handles clipping.
-                            if (frameHeight == 0 || frameWidth == 0) {
-                                l = t = r = b = 0;
+                        if (useTextureView && frameHeight > 0 && frameWidth > 0) {
+                            // TextureView: EglRenderer has no built-in scaling.
+                            // Compute cover bounds: scale video to fill container
+                            // while maintaining aspect ratio. Parent clips overflow.
+                            float frameAspectRatio = (frameRotation % 180 == 0) ? frameWidth / (float) frameHeight
+                                                                                : frameHeight / (float) frameWidth;
+                            float viewAspectRatio = width / (float) height;
+                            int displayW, displayH;
+                            if (frameAspectRatio > viewAspectRatio) {
+                                displayH = height;
+                                displayW = Math.round(height * frameAspectRatio);
                             } else {
-                                float frameAspectRatio = (frameRotation % 180 == 0) ? frameWidth / (float) frameHeight
-                                                                                    : frameHeight / (float) frameWidth;
-                                Point frameDisplaySize =
-                                        RendererCommon.getDisplaySize(scalingType, frameAspectRatio, width, height);
-
-                                l = (width - frameDisplaySize.x) / 2;
-                                t = (height - frameDisplaySize.y) / 2;
-                                r = l + frameDisplaySize.x;
-                                b = t + frameDisplaySize.y;
+                                displayW = width;
+                                displayH = Math.round(width / frameAspectRatio);
                             }
+                            l = (width - displayW) / 2;
+                            t = (height - displayH) / 2;
+                            r = l + displayW;
+                            b = t + displayH;
                         } else {
                             // SurfaceViewRenderer handles scaling internally
                             r = width;
