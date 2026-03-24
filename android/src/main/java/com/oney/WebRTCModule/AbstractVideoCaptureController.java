@@ -35,7 +35,10 @@ public abstract class AbstractVideoCaptureController {
     }
 
     public void initializeVideoCapturer() {
-        videoCapturer = createVideoCapturer();
+        // Don't replace existing custom capturer (e.g. from CapturerProvider)
+        if (videoCapturer == null) {
+            videoCapturer = createVideoCapturer();
+        }
     }
 
     @Nullable
