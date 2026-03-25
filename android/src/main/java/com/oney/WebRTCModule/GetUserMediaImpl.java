@@ -224,6 +224,13 @@ class GetUserMediaImpl {
             boolean hasFactory = CapturerProvider.hasFactory();
             boolean hasGlobalCustomCapturer = globalCustomCapturer != null;
 
+            // Invalidate stale capturer if factory was removed (e.g., after effects cleanup)
+            if (hasGlobalCustomCapturer && !hasFactory) {
+                Log.d(TAG, "Clearing stale global custom capturer (factory removed)");
+                globalCustomCapturer = null;
+                hasGlobalCustomCapturer = false;
+            }
+
             if (hasFactory || hasGlobalCustomCapturer) {
                 VideoCapturer customCapturer = null;
 
