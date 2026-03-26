@@ -987,6 +987,11 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
     }
 
     @ReactMethod
+    public void captureVideoFrame(String trackId, String filePath, int quality, Promise promise) {
+        ThreadUtils.runOnExecutor(() -> { getUserMediaImpl.captureVideoFrame(trackId, filePath, quality, promise); });
+    }
+
+    @ReactMethod
     public void peerConnectionSetConfiguration(ReadableMap configuration, int id) {
         ThreadUtils.runOnExecutor(() -> {
             PeerConnection peerConnection = getPeerConnection(id);

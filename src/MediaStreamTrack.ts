@@ -144,6 +144,21 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     }
 
     /**
+     * Capture the current video frame and save it as an image file.
+     *
+     * @param filePath Full path where the image will be saved (.jpg or .png)
+     * @param quality JPEG quality 1-100 (default 90, ignored for PNG)
+     * @returns Promise that resolves with the file path on success
+     */
+    captureFrame(filePath: string, quality: number = 90): Promise<string> {
+        if (this.kind !== 'video') {
+            throw new Error('Only implemented for video tracks');
+        }
+
+        return WebRTCModule.captureVideoFrame(this.id, filePath, quality);
+    }
+
+    /**
      * Internal function which is used to set the muted state on remote tracks and
      * emit the mute / unmute event.
      *

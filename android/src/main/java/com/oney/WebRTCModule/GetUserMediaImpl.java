@@ -21,6 +21,7 @@ import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
 import com.oney.WebRTCModule.videoEffects.CapturerFactoryInterface;
 import com.oney.WebRTCModule.videoEffects.CapturerProvider;
+import com.oney.WebRTCModule.videoEffects.FrameCaptureProcessor;
 import com.oney.WebRTCModule.videoEffects.ProcessorProvider;
 import com.oney.WebRTCModule.videoEffects.VideoEffectProcessor;
 import com.oney.WebRTCModule.videoEffects.VideoFrameProcessor;
@@ -511,6 +512,51 @@ class GetUserMediaImpl {
                 videoSource.setVideoProcessor(null);
             }
         }
+    }
+
+    /**
+     * Capture a single video frame from the track and save it as an image file.
+     * This attaches a temporary VideoSink to the track, captures one frame, then detaches.
+     *
+     * @param trackId  The video track ID to capture from
+     * @param filePath The full file path to save the image (supports .jpg and .png)
+     * @param quality  JPEG quality (1-100), ignored for PNG
+     * @param promise  Promise resolved with the file path on success
+     */
+    void captureVideoFrame(String trackId, String filePath, int quality, Promise promise) {
+        TrackPrivate trackPrivate = tracks.get(trackId);
+
+        if (trackPrivate == null || !(trackPrivate.track instanceof VideoTrack)) {
+            promise.reject("ERR_TRACK_NOT_FOUND", "Video track not found: " + trackId);
+            return;
+        }
+
+        VideoTrack videoTrack = (VideoTrack) trackPrivate.track;
+
+        // Create a one-shot VideoSink that captures a single frame
+        final VideoSink[] sinkHolder = new VideoSink[1];
+        sinkHolder[0] = new VideoSink() {
+            @Override
+            public void onFrame(VideoFrame frame) {
+                // Remove sink immediately to capture only one frame
+                videoTrack.removeSink(sinkHolder[0]);
+
+                FrameCaptureProcessor.captureFrame(frame, filePath, quality,
+                    new FrameCaptureProcessor.CaptureCallback() {
+                        @Override
+                        public void onCaptureComplete(String path) {
+                            promise.resolve(path);
+                        }
+
+                        @Override
+                        public void onCaptureError(String error) {
+                            promise.reject("ERR_CAPTURE_FAILED", error);
+                        }
+                    });
+            }
+        };
+
+        videoTrack.addSink(sinkHolder[0]);
     }
 
     /**
