@@ -218,8 +218,14 @@ class GetUserMediaImpl {
 
             Log.d(TAG, "getUserMedia(video): " + videoConstraintsMap);
 
-            CameraCaptureController cameraCaptureController = new CameraCaptureController(
-                    reactContext.getCurrentActivity(), getCameraEnumerator(), videoConstraintsMap);
+            Activity currentActivity = this.reactContext.getCurrentActivity();
+            if (currentActivity == null) {
+                errorCallback.invoke("Error", "No current Activity.");
+                return;
+            }
+
+            CameraCaptureController cameraCaptureController =
+                    new CameraCaptureController(currentActivity, getCameraEnumerator(), videoConstraintsMap);
 
             boolean hasFactory = CapturerProvider.hasFactory();
             boolean hasGlobalCustomCapturer = globalCustomCapturer != null;

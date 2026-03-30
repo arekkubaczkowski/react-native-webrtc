@@ -16,19 +16,26 @@ import MediaStreamTrack, { type MediaTrackSettings } from './MediaStreamTrack';
 import MediaStreamTrackEvent from './MediaStreamTrackEvent';
 import permissions from './Permissions';
 import RTCAudioSession from './RTCAudioSession';
+import RTCDataPacketCryptor, { RTCEncryptedPacket } from './RTCDataPacketCryptor';
+import RTCDataPacketCryptorFactory from './RTCDataPacketCryptorFactory';
 import RTCErrorEvent from './RTCErrorEvent';
 import RTCFrameCryptor, { RTCFrameCryptorState } from './RTCFrameCryptor';
-import RTCFrameCryptorFactory, { RTCFrameCryptorAlgorithm, RTCKeyProviderOptions } from './RTCFrameCryptorFactory';
+import RTCFrameCryptorFactory, {
+    RTCFrameCryptorAlgorithm, RTCKeyDerivationAlgorithm, RTCKeyProviderOptions,
+} from './RTCFrameCryptorFactory';
 import RTCIceCandidate from './RTCIceCandidate';
 import RTCKeyProvider from './RTCKeyProvider';
 import RTCPIPView, { startIOSPIP, stopIOSPIP } from './RTCPIPView';
 import RTCPeerConnection from './RTCPeerConnection';
+import RTCRtpEncodingParameters, { type RTCRtpEncodingParametersInit } from './RTCRtpEncodingParameters';
 import RTCRtpReceiver from './RTCRtpReceiver';
+import RTCRtpSendParameters, { type RTCRtpSendParametersInit } from './RTCRtpSendParameters';
 import RTCRtpSender from './RTCRtpSender';
 import RTCRtpTransceiver from './RTCRtpTransceiver';
 import RTCSessionDescription from './RTCSessionDescription';
 import RTCView, { type RTCVideoViewProps, type RTCIOSPIPOptions } from './RTCView';
 import ScreenCapturePickerView from './ScreenCapturePickerView';
+import { Event, EventTarget, getEventAttributeValue, setEventAttributeValue } from './vendor/event-target-shim';
 
 Logger.enable(`${Logger.ROOT_PREFIX}:*`);
 
@@ -36,26 +43,38 @@ Logger.enable(`${Logger.ROOT_PREFIX}:*`);
 setupNativeEvents();
 
 export {
+    Event,
+    EventTarget,
+    getEventAttributeValue,
+    setEventAttributeValue,
     RTCIceCandidate,
     RTCPeerConnection,
     RTCSessionDescription,
     RTCView,
     RTCPIPView,
     ScreenCapturePickerView,
+    RTCRtpEncodingParameters,
     RTCRtpTransceiver,
     RTCRtpReceiver,
     RTCRtpSender,
+    RTCRtpSendParameters,
     RTCErrorEvent,
     RTCAudioSession,
+    RTCDataPacketCryptor,
+    RTCDataPacketCryptorFactory,
+    RTCEncryptedPacket,
     RTCFrameCryptor,
     RTCFrameCryptorAlgorithm,
     RTCFrameCryptorState,
+    RTCKeyDerivationAlgorithm,
     RTCFrameCryptorFactory,
     RTCKeyProvider,
     RTCKeyProviderOptions,
     MediaStream,
     MediaStreamTrack,
     type MediaTrackSettings,
+    type RTCRtpEncodingParametersInit,
+    type RTCRtpSendParametersInit,
     type RTCVideoViewProps,
     type RTCIOSPIPOptions,
     mediaDevices,

@@ -26,8 +26,23 @@ static char frameCryptorUUIDKey;
     }
 }
 
-- (NSData *)bytesFromMap:(NSDictionary *)map key:(NSString *)key isBase64Key:(NSString *)isBase64Key {
-    BOOL isBase64 = [map[isBase64Key] boolValue];
+- (RTCKeyDerivationAlgorithm)getKeyDerivationAlgorithm:(NSNumber *)algorithm {
+    switch ([algorithm intValue]) {
+        case 0:
+            return RTCKeyDerivationAlgorithmPBKDF2;
+        case 1:
+            return RTCKeyDerivationAlgorithmHKDF;
+        default:
+            return RTCKeyDerivationAlgorithmPBKDF2;
+    }
+}
+
+- (NSData *)bytesFromMap:(NSDictionary *)map key:(NSString *)key isBase64Key:(nullable NSString *)isBase64Key {
+    BOOL isBase64 = YES;
+    if (isBase64Key) {
+        isBase64 = [map[isBase64Key] boolValue];
+    }
+
     if (isBase64) {
         return [[NSData alloc] initWithBase64EncodedString:map[key] options:0];
     } else {
@@ -253,6 +268,7 @@ RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(frameCryptorFactoryCreateKeyProvider
 
         NSNumber *keyRingSize = keyProviderOptions[@"keyRingSize"];
         NSNumber *discardFrameWhenCryptorNotReady = keyProviderOptions[@"discardFrameWhenCryptorNotReady"];
+        NSNumber *keyDerivationAlgorithm = keyProviderOptions[@"keyDerivationAlgorithm"];
 
         RTCFrameCryptorKeyProvider *keyProvider = [[RTCFrameCryptorKeyProvider alloc]
                         initWithRatchetSalt:ratchetSalt
@@ -263,7 +279,8 @@ RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(frameCryptorFactoryCreateKeyProvider
                                 keyRingSize:keyRingSize != nil ? [keyRingSize intValue] : 0
             discardFrameWhenCryptorNotReady:discardFrameWhenCryptorNotReady != nil
                                                 ? [discardFrameWhenCryptorNotReady boolValue]
-                                                : NO];
+                                                : NO
+                     keyDerivationAlgorithm:[self getKeyDerivationAlgorithm:keyDerivationAlgorithm]];
         self.keyProviders[keyProviderId] = keyProvider;
         return;
     });
@@ -325,7 +342,7 @@ RCT_EXPORT_METHOD(keyProviderRatchetSharedKey
     }
 
     NSData *newKey = [keyProvider ratchetSharedKey:[keyIndex intValue]];
-    resolve(@{@"result" : newKey});
+    resolve(@{@"result" : [newKey base64EncodedStringWithOptions:0]});
 }
 
 RCT_EXPORT_METHOD(keyProviderExportSharedKey
@@ -344,7 +361,7 @@ RCT_EXPORT_METHOD(keyProviderExportSharedKey
     }
 
     NSData *key = [keyProvider exportSharedKey:[keyIndex intValue]];
-    resolve(@{@"result" : key});
+    resolve(@{@"result" : [key base64EncodedStringWithOptions:0]});
 }
 
 RCT_EXPORT_METHOD(keyProviderSetKey
@@ -400,7 +417,7 @@ RCT_EXPORT_METHOD(keyProviderRatchetKey
     }
 
     NSData *newKey = [keyProvider ratchetKey:participantId withIndex:[keyIndex intValue]];
-    resolve(@{@"result" : newKey});
+    resolve(@{@"result" : [newKey base64EncodedStringWithOptions:0]});
 }
 
 RCT_EXPORT_METHOD(keyProviderExportKey
@@ -425,7 +442,7 @@ RCT_EXPORT_METHOD(keyProviderExportKey
     }
 
     NSData *key = [keyProvider exportKey:participantId withIndex:[keyIndex intValue]];
-    resolve(@{@"result" : key});
+    resolve(@{@"result" : [key base64EncodedStringWithOptions:0]});
 }
 
 RCT_EXPORT_METHOD(keyProviderSetSifTrailer
@@ -479,6 +496,108 @@ RCT_EXPORT_METHOD(keyProviderDispose
         default:
             return @"unknown";
     }
+}
+
+RCT_EXPORT_METHOD(dataPacketCryptorFactoryCreateDataPacketCryptor
+                  : (nonnull NSDictionary *)constraints resolver
+                  : (RCTPromiseResolveBlock)resolve rejecter
+                  : (RCTPromiseRejectBlock)reject) {
+    NSNumber *algorithm = constraints[@"algorithm"];
+    NSString *keyProviderId = constraints[@"keyProviderId"];
+    if (keyProviderId == nil) {
+        reject(@"dataPacketCryptorFactoryCreateDataPacketCryptorFailed", @"Invalid keyProviderId", nil);
+        return;
+    }
+
+    RTCFrameCryptorKeyProvider *keyProvider = self.keyProviders[keyProviderId];
+    if (keyProvider == nil) {
+        reject(@"getKeyProviderForIdFailed", @"Invalid keyProviderId", nil);
+        return;
+    }
+
+    RTCDataPacketCryptor *cryptor = [[RTCDataPacketCryptor alloc] initWithAlgorithm:[self getAlgorithm:algorithm]
+                                                                        keyProvider:keyProvider];
+    NSString *cryptorId = [[NSUUID UUID] UUIDString];
+
+    self.dataPacketCryptors[cryptorId] = cryptor;
+
+    resolve(@{@"dataPacketCryptorId" : cryptorId});
+}
+
+RCT_EXPORT_METHOD(dataPacketCryptorEncrypt
+                  : (nonnull NSDictionary *)constraints resolver
+                  : (RCTPromiseResolveBlock)resolve rejecter
+                  : (RCTPromiseRejectBlock)reject) {
+    NSString *cryptorId = constraints[@"dataPacketCryptorId"];
+    NSString *participantId = constraints[@"participantId"];
+    NSNumber *keyIndex = constraints[@"keyIndex"];
+    NSData *data = [self bytesFromMap:constraints key:@"data" isBase64Key:nil];
+
+    RTCDataPacketCryptor *cryptor = self.dataPacketCryptors[cryptorId];
+
+    if (cryptor == nil) {
+        reject(@"dataPacketCryptorEncryptFailed", @"data packet cryptor not found", nil);
+        return;
+    }
+
+    RTCEncryptedPacket *packet = [cryptor encrypt:participantId keyIndex:[keyIndex unsignedIntValue] data:data];
+
+    if (packet == nil) {
+        reject(@"dataPacketCryptorEncryptFailed", @"packet encryption failed", nil);
+        return;
+    }
+
+    resolve(@{
+        @"payload" : [packet.data base64EncodedStringWithOptions:0],
+        @"iv" : [packet.iv base64EncodedStringWithOptions:0],
+        @"keyIndex" : [NSNumber numberWithUnsignedInt:packet.keyIndex]
+    });
+}
+
+RCT_EXPORT_METHOD(dataPacketCryptorDecrypt
+                  : (nonnull NSDictionary *)constraints resolver
+                  : (RCTPromiseResolveBlock)resolve rejecter
+                  : (RCTPromiseRejectBlock)reject) {
+    NSString *cryptorId = constraints[@"dataPacketCryptorId"];
+    NSString *participantId = constraints[@"participantId"];
+    NSNumber *keyIndex = constraints[@"keyIndex"];
+    NSData *payload = [self bytesFromMap:constraints key:@"payload" isBase64Key:nil];
+    NSData *iv = [self bytesFromMap:constraints key:@"iv" isBase64Key:nil];
+
+    RTCDataPacketCryptor *cryptor = self.dataPacketCryptors[cryptorId];
+
+    if (cryptor == nil) {
+        reject(@"dataPacketCryptorDecryptFailed", @"data packet cryptor not found", nil);
+        return;
+    }
+
+    RTCEncryptedPacket *packet = [[RTCEncryptedPacket alloc] initWithData:payload
+                                                                       iv:iv
+                                                                 keyIndex:[keyIndex unsignedIntValue]];
+    NSData *decryptedData = [cryptor decrypt:participantId encryptedPacket:packet];
+
+    if (decryptedData == nil) {
+        reject(@"dataPacketCryptorDecryptFailed", @"packet decryption failed", nil);
+        return;
+    }
+
+    resolve(@{@"data" : [decryptedData base64EncodedStringWithOptions:0]});
+}
+RCT_EXPORT_METHOD(dataPacketCryptorDispose
+                  : (nonnull NSDictionary *)constraints resolver
+                  : (RCTPromiseResolveBlock)resolve rejecter
+                  : (RCTPromiseRejectBlock)reject) {
+    NSString *cryptorId = constraints[@"dataPacketCryptorId"];
+
+    RTCDataPacketCryptor *cryptor = self.dataPacketCryptors[cryptorId];
+
+    if (cryptor == nil) {
+        reject(@"dataPacketCryptorDisposeFailed", @"data packet cryptor not found", nil);
+        return;
+    }
+
+    [self.dataPacketCryptors removeObjectForKey:cryptorId];
+    resolve(@{@"result" : @"success"});
 }
 
 #pragma mark - RTCFrameCryptorDelegate methods
