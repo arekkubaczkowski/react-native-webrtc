@@ -308,6 +308,14 @@ class GetUserMediaImpl {
     void disposeTrack(String id) {
         TrackPrivate track = tracks.remove(id);
         if (track != null) {
+            // Clear global custom capturer if this track owned it,
+            // so the next getUserMedia creates a fresh capturer via the factory
+            if (globalCustomCapturer != null
+                    && track.videoCaptureController != null
+                    && track.videoCaptureController.videoCapturer == globalCustomCapturer) {
+                Log.d(TAG, "Clearing global custom capturer (track disposed)");
+                globalCustomCapturer = null;
+            }
             track.dispose();
         }
     }
