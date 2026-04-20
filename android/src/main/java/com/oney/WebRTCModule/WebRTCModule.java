@@ -26,6 +26,7 @@ import com.oney.WebRTCModule.webrtcutils.H264AndSoftwareVideoEncoderFactory;
 
 import org.webrtc.AddIceObserver;
 import org.webrtc.AudioProcessingFactory;
+import org.webrtc.AudioSource;
 import org.webrtc.AudioTrack;
 import org.webrtc.CryptoOptions;
 import org.webrtc.EglBase;
@@ -46,8 +47,10 @@ import org.webrtc.SdpObserver;
 import org.webrtc.SessionDescription;
 import org.webrtc.SoftwareVideoDecoderFactory;
 import org.webrtc.SoftwareVideoEncoderFactory;
+import org.webrtc.SurfaceTextureHelper;
 import org.webrtc.VideoDecoderFactory;
 import org.webrtc.VideoEncoderFactory;
+import org.webrtc.VideoSource;
 import org.webrtc.VideoTrack;
 import org.webrtc.audio.AudioDeviceModule;
 import org.webrtc.audio.JavaAudioDeviceModule;
@@ -475,6 +478,15 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
 
     public VideoTrack createVideoTrack(AbstractVideoCaptureController videoCaptureController) {
         return getUserMediaImpl.createVideoTrack(videoCaptureController);
+    }
+
+    public void registerTrack(AudioTrack track, AudioSource source) {
+        getUserMediaImpl.registerTrack(track, source);
+    }
+
+    public void registerTrack(VideoTrack track, VideoSource source, AbstractVideoCaptureController controller,
+            SurfaceTextureHelper surfaceTextureHelper) {
+        getUserMediaImpl.registerTrack(track, source, controller, surfaceTextureHelper);
     }
 
     public void createStream(
