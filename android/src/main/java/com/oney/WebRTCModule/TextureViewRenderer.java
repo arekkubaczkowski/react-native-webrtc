@@ -26,12 +26,15 @@ public class TextureViewRenderer extends TextureView
     private static final String TAG = "TextureViewRenderer";
 
     private final EglRenderer eglRenderer;
-    private RendererEvents rendererEvents;
-    private boolean isInitialized = false;
-    private boolean isFirstFrameRendered = false;
-    private int rotatedFrameWidth;
-    private int rotatedFrameHeight;
-    private int frameRotation;
+    // All fields below are written from the UI thread (init/release/SurfaceTextureListener
+    // callbacks) and read from the EglRenderer thread (onFrame). volatile gives the necessary
+    // cross-thread visibility without taking a lock during heavy GL calls.
+    private volatile RendererEvents rendererEvents;
+    private volatile boolean isInitialized = false;
+    private volatile boolean isFirstFrameRendered = false;
+    private volatile int rotatedFrameWidth;
+    private volatile int rotatedFrameHeight;
+    private volatile int frameRotation;
 
     public TextureViewRenderer(Context context) {
         super(context);
@@ -60,8 +63,12 @@ public class TextureViewRenderer extends TextureView
 
     public void release() {
         if (isInitialized) {
-            eglRenderer.release();
+            // Flip flag FIRST so any in-flight onFrame on the EglRenderer thread that passes
+            // its `isInitialized` snapshot still operates on a renderer that's about to be
+            // released — EglRenderer's internal lock serializes that final frame safely.
             isInitialized = false;
+            rendererEvents = null;
+            eglRenderer.release();
         }
     }
 
@@ -72,7 +79,10 @@ public class TextureViewRenderer extends TextureView
     public void setScalingType(ScalingType scalingType) {
         // Scaling is handled by WebRTCView.onLayout which sizes the TextureView
         // appropriately for cover/contain. EglRenderer stretches to fill, which
-        // is correct since onLayout already computed the right bounds.
+        // is correct since onLayout already computed the right bounds. External
+        // callers expecting per-renderer scaling control will get a no-op — log
+        // so the silent disagreement is at least visible in logcat.
+        Log.d(TAG, "setScalingType(" + scalingType + ") is a no-op — scaling handled by host layout");
     }
 
     public void clearImage() {
@@ -82,12 +92,22 @@ public class TextureViewRenderer extends TextureView
     // VideoSink implementation
     @Override
     public void onFrame(VideoFrame videoFrame) {
+        // Snapshot once — release() can flip isInitialized=false from the UI thread mid-call;
+        // if we passed that snapshot, the EglRenderer is still operating on its own thread and
+        // will accept the frame (it has its own internal lock for the actual GL ops).
+        if (!isInitialized) {
+            return;
+        }
         eglRenderer.onFrame(videoFrame);
+
+        // Capture snapshot so a concurrent release() that nulls rendererEvents can't NPE us
+        // between the null-check and the call.
+        RendererEvents events = rendererEvents;
 
         if (!isFirstFrameRendered) {
             isFirstFrameRendered = true;
-            if (rendererEvents != null) {
-                rendererEvents.onFirstFrameRendered();
+            if (events != null) {
+                events.onFirstFrameRendered();
             }
         }
 
@@ -104,8 +124,8 @@ public class TextureViewRenderer extends TextureView
             rotatedFrameWidth = width;
             rotatedFrameHeight = height;
             frameRotation = rotation;
-            if (rendererEvents != null) {
-                rendererEvents.onFrameResolutionChanged(
+            if (events != null) {
+                events.onFrameResolutionChanged(
                         videoFrame.getBuffer().getWidth(),
                         videoFrame.getBuffer().getHeight(),
                         rotation);
