@@ -800,6 +800,19 @@ public class WebRTCView extends ViewGroup {
         // Detach current renderer from video track
         removeRendererFromVideoTrack();
 
+        // Defensive release of the soon-to-be-active renderer. It may carry leftover
+        // initialised EglRenderer state from a previous toggle cycle where the track was
+        // removed without going through removeRendererFromVideoTrack. Calling init() twice
+        // without an intermediate release throws — release here is idempotent (both
+        // SurfaceViewRenderer and TextureViewRenderer guard their internal state).
+        if (useTextureView) {
+            if (textureViewRenderer != null) {
+                textureViewRenderer.release();
+            }
+        } else {
+            surfaceViewRenderer.release();
+        }
+
         this.useTextureView = useTextureView;
 
         if (useTextureView) {
