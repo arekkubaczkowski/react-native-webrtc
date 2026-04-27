@@ -26,9 +26,7 @@ public class TextureViewRenderer extends TextureView
     private static final String TAG = "TextureViewRenderer";
 
     private final EglRenderer eglRenderer;
-    // All fields below are written from the UI thread (init/release/SurfaceTextureListener
-    // callbacks) and read from the EglRenderer thread (onFrame). volatile gives the necessary
-    // cross-thread visibility without taking a lock during heavy GL calls.
+    // Written from UI thread, read from EglRenderer thread (onFrame) — volatile avoids locking.
     private volatile RendererEvents rendererEvents;
     private volatile boolean isInitialized = false;
     private volatile boolean isFirstFrameRendered = false;
@@ -53,19 +51,29 @@ public class TextureViewRenderer extends TextureView
         eglRenderer.init(sharedContext, configAttributes, drawer);
         isInitialized = true;
         isFirstFrameRendered = false;
+        // Reset cached frame dims so the next first-frame fires onFrameResolutionChanged
+        // even when the new stream has the same dims as the previous one. Without this, a
+        // camera swap with matching dims (e.g. front→back→front, both 720x1280) silently
+        // skips the resolution-change event and the host view keeps stale layout bounds.
+        rotatedFrameWidth = 0;
+        rotatedFrameHeight = 0;
+        frameRotation = 0;
 
-        // If the SurfaceTexture is already available, create the EGL surface now
         SurfaceTexture surfaceTexture = getSurfaceTexture();
         if (surfaceTexture != null) {
+            // Pin producer buffer to view dims so EGL surface is created at the right aspect.
+            int w = getWidth();
+            int h = getHeight();
+            if (w > 0 && h > 0) {
+                surfaceTexture.setDefaultBufferSize(w, h);
+            }
             eglRenderer.createEglSurface(surfaceTexture);
         }
     }
 
     public void release() {
         if (isInitialized) {
-            // Flip flag FIRST so any in-flight onFrame on the EglRenderer thread that passes
-            // its `isInitialized` snapshot still operates on a renderer that's about to be
-            // released — EglRenderer's internal lock serializes that final frame safely.
+            // Flip flag before tearing down — EglRenderer's internal lock handles in-flight frames.
             isInitialized = false;
             rendererEvents = null;
             eglRenderer.release();
@@ -77,11 +85,9 @@ public class TextureViewRenderer extends TextureView
     }
 
     public void setScalingType(ScalingType scalingType) {
-        // Scaling is handled by WebRTCView.onLayout which sizes the TextureView
-        // appropriately for cover/contain. EglRenderer stretches to fill, which
-        // is correct since onLayout already computed the right bounds. External
-        // callers expecting per-renderer scaling control will get a no-op — log
-        // so the silent disagreement is at least visible in logcat.
+        // No-op: WebRTCView.onLayout sizes the TextureView to match frame aspect, so the
+        // renderer's stretch-to-fill behavior produces correct output. Logged in case a
+        // future change makes scaling control here actually meaningful.
         Log.d(TAG, "setScalingType(" + scalingType + ") is a no-op — scaling handled by host layout");
     }
 
@@ -92,16 +98,12 @@ public class TextureViewRenderer extends TextureView
     // VideoSink implementation
     @Override
     public void onFrame(VideoFrame videoFrame) {
-        // Snapshot once — release() can flip isInitialized=false from the UI thread mid-call;
-        // if we passed that snapshot, the EglRenderer is still operating on its own thread and
-        // will accept the frame (it has its own internal lock for the actual GL ops).
         if (!isInitialized) {
             return;
         }
         eglRenderer.onFrame(videoFrame);
 
-        // Capture snapshot so a concurrent release() that nulls rendererEvents can't NPE us
-        // between the null-check and the call.
+        // Snapshot — concurrent release() can null rendererEvents between check and use.
         RendererEvents events = rendererEvents;
 
         if (!isFirstFrameRendered) {
@@ -111,7 +113,6 @@ public class TextureViewRenderer extends TextureView
             }
         }
 
-        // Check for resolution changes
         int rotation = videoFrame.getRotation();
         int width = (rotation % 180 == 0)
                 ? videoFrame.getRotatedWidth()
@@ -137,20 +138,31 @@ public class TextureViewRenderer extends TextureView
     @Override
     public void onSurfaceTextureAvailable(SurfaceTexture surfaceTexture, int width, int height) {
         if (isInitialized) {
+            surfaceTexture.setDefaultBufferSize(width, height);
             eglRenderer.createEglSurface(surfaceTexture);
         }
     }
 
     @Override
     public void onSurfaceTextureSizeChanged(SurfaceTexture surfaceTexture, int width, int height) {
-        // EglRenderer handles size changes through the layout mechanism
+        if (!isInitialized || width <= 0 || height <= 0) {
+            return;
+        }
+        // TextureView does not auto-resize the SurfaceTexture buffer or the EGL viewport
+        // on layout changes (unlike SurfaceView). Re-pin buffer + recreate EGL surface so
+        // EglRenderer's per-frame eglBase.surfaceWidth/Height read returns new dims.
+        surfaceTexture.setDefaultBufferSize(width, height);
+        eglRenderer.releaseEglSurface(() -> {
+            if (isInitialized) {
+                eglRenderer.createEglSurface(surfaceTexture);
+            }
+        });
     }
 
     @Override
     public boolean onSurfaceTextureDestroyed(SurfaceTexture surfaceTexture) {
         if (isInitialized) {
-            // Return false = we take ownership of the SurfaceTexture and release it
-            // asynchronously after EGL is done. This avoids blocking the UI thread.
+            // Return false = we own the SurfaceTexture, release async after EGL teardown.
             eglRenderer.releaseEglSurface(() -> surfaceTexture.release());
             return false;
         }
@@ -159,6 +171,5 @@ public class TextureViewRenderer extends TextureView
 
     @Override
     public void onSurfaceTextureUpdated(SurfaceTexture surfaceTexture) {
-        // No-op
     }
 }
