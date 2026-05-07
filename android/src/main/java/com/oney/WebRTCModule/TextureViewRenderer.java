@@ -38,6 +38,11 @@ public class TextureViewRenderer extends TextureView
         super(context);
         eglRenderer = new EglRenderer(TAG);
         setSurfaceTextureListener(this);
+        // Non-opaque: with custom-transform, the host lays this view out at full
+        // container size and applies a matrix that shrinks the rendered frame to
+        // the fitted "letterbox" rect inside it. The pixels outside that rect must
+        // be transparent so the parent's background shows through; setOpaque(true)
+        // would let HWUI leave undefined data there on some devices.
         setOpaque(false);
     }
 
