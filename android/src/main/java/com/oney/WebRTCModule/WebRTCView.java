@@ -3,6 +3,7 @@ package com.oney.WebRTCModule;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.Matrix;
 import android.graphics.Point;
 import android.util.Log;
 import android.view.View;
@@ -341,119 +342,124 @@ public class WebRTCView extends ViewGroup {
 
     @Override
     protected void onLayout(boolean changed, int l, int t, int r, int b) {
-        int height = b - t;
         int width = r - l;
+        int height = b - t;
 
-        if (height == 0 || width == 0) {
-            l = t = r = b = 0;
-        } else {
-            int frameHeight;
-            int frameRotation;
-            int frameWidth;
-            ScalingType scalingType;
-
-            synchronized (layoutSyncRoot) {
-                frameHeight = this.frameHeight;
-                frameRotation = this.frameRotation;
-                frameWidth = this.frameWidth;
-                scalingType = this.scalingType;
-            }
-
-            if (useCustomTransform && frameHeight > 0 && frameWidth > 0) {
-                // Custom transformation mode
-                // We keep SCALE_ASPECT_FIT (contain) so video is not cropped
-                // and we control the size/position via layout bounds
-                if (useTextureView && textureViewRenderer != null) {
-                    textureViewRenderer.setScalingType(ScalingType.SCALE_ASPECT_FIT);
-                } else {
-                    surfaceViewRenderer.setScalingType(ScalingType.SCALE_ASPECT_FIT);
-                }
-                
-                float frameAspectRatio = (frameRotation % 180 == 0) ? frameWidth / (float) frameHeight
-                                                                    : frameHeight / (float) frameWidth;
-                
-                // Start with SCALE_ASPECT_FIT size (100% visible, no cropping)
-                Point baseSize = RendererCommon.getDisplaySize(
-                    ScalingType.SCALE_ASPECT_FIT, frameAspectRatio, width, height);
-                
-                // Apply custom scale to the fitted size
-                int scaledWidth = (int)(baseSize.x * customScale);
-                int scaledHeight = (int)(baseSize.y * customScale);
-                
-                // Calculate base position (centered)
-                int centerX = width / 2;
-                int centerY = height / 2;
-                
-                // Apply custom translation (as fraction of container size)
-                int offsetX = (int)(width * customTranslateX);
-                int offsetY = (int)(height * customTranslateY);
-                
-                // Calculate final bounds
-                int rawL = centerX - scaledWidth / 2 + offsetX;
-                int rawT = centerY - scaledHeight / 2 + offsetY;
-                int rawR = rawL + scaledWidth;
-                int rawB = rawT + scaledHeight;
-
-                // Clamp bounds to container to prevent overflow onto other views
-                // SurfaceView ignores parent's overflow:hidden, so we must clip here
-                l = Math.max(0, rawL);
-                t = Math.max(0, rawT);
-                r = Math.min(width, rawR);
-                b = Math.min(height, rawB);
-            } else {
-                switch (scalingType) {
-                    case SCALE_ASPECT_FILL:
-                        if (useTextureView && frameHeight > 0 && frameWidth > 0) {
-                            // TextureView: EglRenderer has no built-in scaling.
-                            // Compute cover bounds: scale video to fill container
-                            // while maintaining aspect ratio. Parent clips overflow.
-                            float frameAspectRatio = (frameRotation % 180 == 0) ? frameWidth / (float) frameHeight
-                                                                                : frameHeight / (float) frameWidth;
-                            float viewAspectRatio = width / (float) height;
-                            int displayW, displayH;
-                            if (frameAspectRatio > viewAspectRatio) {
-                                displayH = height;
-                                displayW = Math.round(height * frameAspectRatio);
-                            } else {
-                                displayW = width;
-                                displayH = Math.round(width / frameAspectRatio);
-                            }
-                            l = (width - displayW) / 2;
-                            t = (height - displayH) / 2;
-                            r = l + displayW;
-                            b = t + displayH;
-                        } else {
-                            // SurfaceViewRenderer handles scaling internally
-                            r = width;
-                            l = 0;
-                            b = height;
-                            t = 0;
-                        }
-                        break;
-                    case SCALE_ASPECT_FIT:
-                    default:
-                        if (frameHeight == 0 || frameWidth == 0) {
-                            l = t = r = b = 0;
-                        } else {
-                            float frameAspectRatio = (frameRotation % 180 == 0) ? frameWidth / (float) frameHeight
-                                                                                : frameHeight / (float) frameWidth;
-                            Point frameDisplaySize =
-                                    RendererCommon.getDisplaySize(scalingType, frameAspectRatio, width, height);
-
-                            l = (width - frameDisplaySize.x) / 2;
-                            t = (height - frameDisplaySize.y) / 2;
-                            r = l + frameDisplaySize.x;
-                            b = t + frameDisplaySize.y;
-                        }
-                        break;
-                }
-            }
+        if (width == 0 || height == 0) {
+            layoutRenderer(0, 0, 0, 0);
+            return;
         }
+
+        int frameWidth, frameHeight, frameRotation;
+        ScalingType scalingType;
+        synchronized (layoutSyncRoot) {
+            frameWidth = this.frameWidth;
+            frameHeight = this.frameHeight;
+            frameRotation = this.frameRotation;
+            scalingType = this.scalingType;
+        }
+
+        if (useCustomTransform && frameWidth > 0 && frameHeight > 0) {
+            layoutWithCustomTransform(width, height, frameWidth, frameHeight, frameRotation);
+        } else {
+            layoutWithDefaultScaling(width, height, frameWidth, frameHeight, frameRotation, scalingType);
+        }
+    }
+
+    private void layoutWithCustomTransform(int width, int height,
+                                            int frameWidth, int frameHeight, int frameRotation) {
+        float frameAspectRatio = computeFrameAspectRatio(frameWidth, frameHeight, frameRotation);
+        Point baseSize = RendererCommon.getDisplaySize(
+                ScalingType.SCALE_ASPECT_FIT, frameAspectRatio, width, height);
+
+        if (useTextureView && textureViewRenderer != null) {
+            // TextureView: lay the renderer out at the FULL container and apply
+            // scale/translate as a 2D matrix on the texture content. Container-sized
+            // bounds are required so customScale > 1 can grow past baseSize and cover
+            // the letterbox area (a baseSize-sized renderer would clip the zoom to
+            // the letterbox interior). The matrix first shrinks the EglRenderer's
+            // stretched-to-view content back to baseSize aspect, then applies
+            // customScale + translate. The GPU handles the transform during
+            // composition — no relayout / SurfaceTexture rebuild on transform changes.
+            layoutRenderer(0, 0, width, height);
+            applyCustomTextureTransform(width, height, baseSize.x, baseSize.y);
+            return;
+        }
+        // SurfaceView: scale by sizing the renderer's bounds. SCALE_ASPECT_FIT inside
+        // the renderer letterboxes the frame and preserves aspect; per-edge clamp
+        // prevents the surface from drawing over sibling views (SurfaceView ignores
+        // parent overflow:hidden).
+        surfaceViewRenderer.setScalingType(ScalingType.SCALE_ASPECT_FIT);
+        int scaledWidth = (int)(baseSize.x * customScale);
+        int scaledHeight = (int)(baseSize.y * customScale);
+        int centerX = width / 2;
+        int centerY = height / 2;
+        int offsetX = (int)(width * customTranslateX);
+        int offsetY = (int)(height * customTranslateY);
+        int rawL = centerX - scaledWidth / 2 + offsetX;
+        int rawT = centerY - scaledHeight / 2 + offsetY;
+        layoutRenderer(
+                Math.max(0, rawL),
+                Math.max(0, rawT),
+                Math.min(width, rawL + scaledWidth),
+                Math.min(height, rawT + scaledHeight));
+    }
+
+    private void layoutWithDefaultScaling(int width, int height,
+                                           int frameWidth, int frameHeight, int frameRotation,
+                                           ScalingType scalingType) {
+        if (scalingType == ScalingType.SCALE_ASPECT_FILL) {
+            if (useTextureView && frameWidth > 0 && frameHeight > 0) {
+                // EglRenderer has no built-in scaling — compute cover bounds; the
+                // parent ViewGroup clips overflow.
+                float frameAspectRatio = computeFrameAspectRatio(frameWidth, frameHeight, frameRotation);
+                float viewAspectRatio = width / (float) height;
+                int displayW, displayH;
+                if (frameAspectRatio > viewAspectRatio) {
+                    displayH = height;
+                    displayW = Math.round(height * frameAspectRatio);
+                } else {
+                    displayW = width;
+                    displayH = Math.round(width / frameAspectRatio);
+                }
+                layoutRendererCentered(width, height, displayW, displayH);
+            } else {
+                // SurfaceView (or TextureView with no frame yet): renderer fills
+                // the container. SurfaceView handles internal scaling; TextureView
+                // gets an empty surface until the first frame arrives.
+                layoutRenderer(0, 0, width, height);
+            }
+            return;
+        }
+        // SCALE_ASPECT_FIT (and any other default).
+        if (frameWidth == 0 || frameHeight == 0) {
+            layoutRenderer(0, 0, 0, 0);
+            return;
+        }
+        float frameAspectRatio = computeFrameAspectRatio(frameWidth, frameHeight, frameRotation);
+        Point displaySize = RendererCommon.getDisplaySize(scalingType, frameAspectRatio, width, height);
+        layoutRendererCentered(width, height, displaySize.x, displaySize.y);
+    }
+
+    private void layoutRenderer(int l, int t, int r, int b) {
         if (useTextureView && textureViewRenderer != null) {
             textureViewRenderer.layout(l, t, r, b);
         } else {
             surfaceViewRenderer.layout(l, t, r, b);
         }
+    }
+
+    private void layoutRendererCentered(int containerWidth, int containerHeight,
+                                         int contentWidth, int contentHeight) {
+        int left = (containerWidth - contentWidth) / 2;
+        int top = (containerHeight - contentHeight) / 2;
+        layoutRenderer(left, top, left + contentWidth, top + contentHeight);
+    }
+
+    private static float computeFrameAspectRatio(int frameWidth, int frameHeight, int frameRotation) {
+        return (frameRotation % 180 == 0)
+                ? frameWidth / (float) frameHeight
+                : frameHeight / (float) frameWidth;
     }
 
     /**
@@ -745,7 +751,7 @@ public class WebRTCView extends ViewGroup {
     public void setCustomScale(float scale) {
         if (this.customScale != scale) {
             this.customScale = scale;
-            requestSurfaceViewRendererLayout();
+            applyCustomTransformOrRequestLayout();
         }
     }
 
@@ -757,7 +763,7 @@ public class WebRTCView extends ViewGroup {
     public void setCustomTranslateX(float translateX) {
         if (this.customTranslateX != translateX) {
             this.customTranslateX = translateX;
-            requestSurfaceViewRendererLayout();
+            applyCustomTransformOrRequestLayout();
         }
     }
 
@@ -769,7 +775,7 @@ public class WebRTCView extends ViewGroup {
     public void setCustomTranslateY(float translateY) {
         if (this.customTranslateY != translateY) {
             this.customTranslateY = translateY;
-            requestSurfaceViewRendererLayout();
+            applyCustomTransformOrRequestLayout();
         }
     }
 
@@ -781,6 +787,70 @@ public class WebRTCView extends ViewGroup {
     public void setUseCustomTransform(boolean enabled) {
         if (this.useCustomTransform != enabled) {
             this.useCustomTransform = enabled;
+            // Reset the texture matrix when leaving custom-transform mode so a stale
+            // scale/translate from the previous state doesn't bleed into the default
+            // scaling path (which never calls setTransform).
+            if (!enabled && useTextureView && textureViewRenderer != null) {
+                textureViewRenderer.setTransform(new Matrix());
+            }
+            requestSurfaceViewRendererLayout();
+        }
+    }
+
+    /**
+     * Applies customScale + customTranslate{X,Y} as a 2D matrix on the TextureView's
+     * content. Cheap — no layout pass, only a redraw triggered by setTransform.
+     *
+     * The TextureView is laid out at the container size, so the EglRenderer's content
+     * fills the view (stretched, aspect-distorted unless container == frame aspect).
+     * The matrix first shrinks that content back to the fitted base size — undoing
+     * the stretch and producing correct aspect — then scales by customScale and
+     * translates. With customScale = 1 the result matches SCALE_ASPECT_FIT (letterbox);
+     * with customScale > 1 the rendered frame grows past baseSize and covers the
+     * previously-letterbox area, with overflow clipped by TextureView's bounds.
+     */
+    private void applyCustomTextureTransform(int containerWidth, int containerHeight,
+                                             int baseWidth, int baseHeight) {
+        if (textureViewRenderer == null) {
+            return;
+        }
+        float fitScaleX = baseWidth / (float) containerWidth;
+        float fitScaleY = baseHeight / (float) containerHeight;
+        Matrix matrix = new Matrix();
+        matrix.setScale(fitScaleX * customScale, fitScaleY * customScale,
+                        containerWidth / 2f, containerHeight / 2f);
+        matrix.postTranslate(containerWidth * customTranslateX,
+                             containerHeight * customTranslateY);
+        textureViewRenderer.setTransform(matrix);
+    }
+
+    /**
+     * Hot path used by custom-transform setters. When the matrix-based path is active
+     * and dimensions are known, just update the matrix — no relayout, no SurfaceTexture
+     * rebuild. Otherwise fall back to a normal layout pass (first frame, before initial
+     * layout, SurfaceView mode, or custom transform disabled).
+     */
+    private void applyCustomTransformOrRequestLayout() {
+        int frameW, frameH, frameRotation;
+        synchronized (layoutSyncRoot) {
+            frameW = this.frameWidth;
+            frameH = this.frameHeight;
+            frameRotation = this.frameRotation;
+        }
+        int containerW = getWidth();
+        int containerH = getHeight();
+        if (useCustomTransform
+                && useTextureView
+                && textureViewRenderer != null
+                && containerW > 0
+                && containerH > 0
+                && frameW > 0
+                && frameH > 0) {
+            float frameAspectRatio = computeFrameAspectRatio(frameW, frameH, frameRotation);
+            Point baseSize = RendererCommon.getDisplaySize(
+                    ScalingType.SCALE_ASPECT_FIT, frameAspectRatio, containerW, containerH);
+            applyCustomTextureTransform(containerW, containerH, baseSize.x, baseSize.y);
+        } else {
             requestSurfaceViewRendererLayout();
         }
     }
