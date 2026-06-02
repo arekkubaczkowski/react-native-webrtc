@@ -21,6 +21,7 @@ import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
 import com.oney.WebRTCModule.videoEffects.CapturerFactoryInterface;
 import com.oney.WebRTCModule.videoEffects.CapturerProvider;
+import com.oney.WebRTCModule.videoEffects.PowerVrSegmentationProcessor;
 import com.oney.WebRTCModule.videoEffects.ProcessorProvider;
 import com.oney.WebRTCModule.videoEffects.VideoEffectProcessor;
 import com.oney.WebRTCModule.videoEffects.VideoFrameProcessor;
@@ -500,6 +501,23 @@ class GetUserMediaImpl {
 
         track.setEnabled(true);
         tracks.put(id, new TrackPrivate(track, videoSource, videoCaptureController, surfaceTextureHelper));
+
+        // TEMPORARY spike — remove before merge. Force-attach the PowerVR GL-segmentation
+        // processor onto every camera capture so the CPU/OpenCL/OpenGL backend comparison
+        // runs with zero JS wiring. Passthrough (never alters frames); camera captures only.
+        if (videoCaptureController instanceof CameraCaptureController) {
+            try {
+                VideoFrameProcessor spike = ProcessorProvider.getProcessor(PowerVrSegmentationProcessor.NAME);
+                if (spike != null) {
+                    List<VideoFrameProcessor> spikeList = new ArrayList<>();
+                    spikeList.add(spike);
+                    videoSource.setVideoProcessor(new VideoEffectProcessor(spikeList, surfaceTextureHelper));
+                    Log.i("PowerVrSegSpike", "force-attached spike processor to camera track " + id);
+                }
+            } catch (Throwable t) {
+                Log.e("PowerVrSegSpike", "failed to force-attach spike processor", t);
+            }
+        }
 
         videoCaptureController.startCapture();
 
