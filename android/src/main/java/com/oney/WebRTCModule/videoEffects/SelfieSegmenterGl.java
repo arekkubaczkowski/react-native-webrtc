@@ -13,66 +13,111 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 /**
- * SPIKE: runs MediaPipe selfie segmentation through a TFLite interpreter whose
- * GPU delegate is FORCED to the OpenGL ES backend (not OpenCL).
+ * SPIKE: runs MediaPipe selfie segmentation on the SAME frame through three TFLite
+ * backends and compares them:
+ *   - CPU                       -> ground-truth mask (known good; upstream: "CPU works")
+ *   - GPU delegate, OpenCL      -> the backend TSVB uses; expected to break on PowerVR DXT
+ *   - GPU delegate, OpenGL ES   -> the candidate fix
  *
- * Why: on Imagination PowerVR (Pixel 10 / Tensor G5) the OpenCL inference path
- * the TSVB SDK uses produces no / garbage output (black screen). TSVB bakes the
- * backend choice into a native subgraph we cannot flip. Here we run our own
- * interpreter where forcing the GL backend is a one-liner, to answer a single
- * question on-device: does the GL backend yield a valid mask on this GPU?
+ * One device run therefore confirms BOTH the cause and the fix at once:
+ *   - CPU valid + CL zero/NaN/diff + GL ~= CPU  => CL is the bug, forcing GL is the fix (jackpot)
+ *   - GL zero/NaN/diff                          => GL also broken (CL<->GL interop) — GL is not the fix
+ *   - CL ~= CPU                                 => bug not reproduced in our harness (driver/path differs)
  *
- * It reports mask statistics only — no compositing.
+ * Comparing against CPU makes the verdict robust regardless of subject framing or
+ * exact input normalization (all backends get the identical input).
  *
- * Must be constructed and used on the SAME thread (GL delegate context affinity).
+ * Model: selfiesegmentation_mlkit 256x256, input [1,256,256,3] float32 normalized to
+ * [0,1] (verified), output [1,256,256,1] float32 sigmoid (>0.5 = foreground).
+ *
+ * Must be constructed and used on the SAME thread (GPU delegate context affinity).
  */
 public class SelfieSegmenterGl {
     private static final String TAG = "PowerVrSegSpike";
     private static final String MODEL_ASSET = "selfie_segmenter.tflite";
+    private static final float MATCH_THRESHOLD = 0.08f; // mean abs diff vs CPU to call a backend "matching"
 
-    private Interpreter interpreter;
-    private GpuDelegate delegate;
+    private Interpreter cpu, cl, gl;
+    private GpuDelegate clDelegate, glDelegate;
+    private boolean cpuReady, clReady, glReady;
+
     private int inW = 256, inH = 256, inC = 3;
     private int outLen = 256 * 256;
-    private ByteBuffer inputBuffer;
-    private ByteBuffer outputBuffer;
-    private boolean ready = false;
+    private ByteBuffer inputBuffer, cpuOut, clOut, glOut;
 
     public SelfieSegmenterGl(Context context) {
+        byte[] model;
         try {
-            ByteBuffer model = loadAsset(context, MODEL_ASSET);
+            model = loadAssetBytes(context, MODEL_ASSET);
+        } catch (Throwable t) {
+            Log.e(TAG, "Model load FAILED — " + t, t);
+            return;
+        }
 
-            GpuDelegateFactory.Options opts = new GpuDelegateFactory.Options();
-            // The whole point of the spike: force OpenGL ES, never OpenCL.
-            opts.setForceBackend(GpuDelegateFactory.Options.GpuBackend.OPENGL);
-            delegate = new GpuDelegate(opts);
-
-            Interpreter.Options io = new Interpreter.Options();
-            io.addDelegate(delegate);
-            interpreter = new Interpreter(model, io);
-
-            int[] inShape = interpreter.getInputTensor(0).shape(); // [1,H,W,C]
-            inH = inShape[1];
-            inW = inShape[2];
-            inC = inShape[3];
-            int[] outShape = interpreter.getOutputTensor(0).shape();
+        // CPU reference (ground truth).
+        try {
+            cpu = new Interpreter(toDirectBuffer(model), new Interpreter.Options());
+            int[] in = cpu.getInputTensor(0).shape();
+            inH = in[1];
+            inW = in[2];
+            inC = in[3];
+            int[] out = cpu.getOutputTensor(0).shape();
             outLen = 1;
-            for (int d : outShape) {
+            for (int d : out) {
                 outLen *= d;
             }
-
-            inputBuffer = ByteBuffer.allocateDirect(inW * inH * inC * 4).order(ByteOrder.nativeOrder());
-            outputBuffer = ByteBuffer.allocateDirect(outLen * 4).order(ByteOrder.nativeOrder());
-
-            ready = true;
-            Log.i(TAG, "Segmenter ready (GL-forced). input=" + inW + "x" + inH + "x" + inC + " outLen=" + outLen);
+            cpuReady = true;
         } catch (Throwable t) {
-            Log.e(TAG, "Segmenter init FAILED (GL delegate could not be created?) — " + t, t);
+            Log.e(TAG, "CPU interpreter init FAILED — " + t, t);
+        }
+
+        clDelegate = makeDelegate(GpuDelegateFactory.Options.GpuBackend.OPENCL, "OpenCL");
+        if (clDelegate != null) {
+            try {
+                Interpreter.Options io = new Interpreter.Options();
+                io.addDelegate(clDelegate);
+                cl = new Interpreter(toDirectBuffer(model), io);
+                clReady = true;
+            } catch (Throwable t) {
+                Log.e(TAG, "OpenCL interpreter init FAILED — " + t, t);
+            }
+        }
+
+        glDelegate = makeDelegate(GpuDelegateFactory.Options.GpuBackend.OPENGL, "OpenGL");
+        if (glDelegate != null) {
+            try {
+                Interpreter.Options io = new Interpreter.Options();
+                io.addDelegate(glDelegate);
+                gl = new Interpreter(toDirectBuffer(model), io);
+                glReady = true;
+            } catch (Throwable t) {
+                Log.e(TAG, "OpenGL interpreter init FAILED — " + t, t);
+            }
+        }
+
+        if (cpuReady || clReady || glReady) {
+            inputBuffer = ByteBuffer.allocateDirect(inW * inH * inC * 4).order(ByteOrder.nativeOrder());
+            cpuOut = ByteBuffer.allocateDirect(outLen * 4).order(ByteOrder.nativeOrder());
+            clOut = ByteBuffer.allocateDirect(outLen * 4).order(ByteOrder.nativeOrder());
+            glOut = ByteBuffer.allocateDirect(outLen * 4).order(ByteOrder.nativeOrder());
+        }
+        Log.i(TAG, "Segmenter ready: cpu=" + cpuReady + " openCL=" + clReady + " openGL=" + glReady
+                + " input=" + inW + "x" + inH + "x" + inC + " outLen=" + outLen);
+    }
+
+    private static GpuDelegate makeDelegate(GpuDelegateFactory.Options.GpuBackend backend, String label) {
+        try {
+            GpuDelegateFactory.Options opts = new GpuDelegateFactory.Options();
+            opts.setForceBackend(backend);
+            return new GpuDelegate(opts);
+        } catch (Throwable t) {
+            Log.e(TAG, label + " delegate could not be created on this GPU — " + t, t);
+            return null;
         }
     }
 
     public boolean isReady() {
-        return ready;
+        return cpuReady || clReady || glReady;
     }
 
     public int inputWidth() {
@@ -83,73 +128,174 @@ public class SelfieSegmenterGl {
         return inH;
     }
 
-    /**
-     * Runs inference on a model-sized ARGB frame (length inW*inH) and logs mask stats.
-     * A valid mask (GL works) => non-zero coverage, max near 1, zero NaN.
-     * An invalid mask (GL is not a fix) => all zero or NaN.
-     */
+    /** Runs every available backend on a model-sized ARGB frame and logs stats + verdict. */
     public void runAndLog(int[] argb) {
-        if (!ready) {
+        if (!isReady()) {
             return;
         }
         try {
-            inputBuffer.rewind();
-            int px = inW * inH;
-            for (int i = 0; i < px; i++) {
-                int p = argb[i];
-                inputBuffer.putFloat(((p >> 16) & 0xFF) / 255f); // R
-                inputBuffer.putFloat(((p >> 8) & 0xFF) / 255f);  // G
-                inputBuffer.putFloat((p & 0xFF) / 255f);         // B
-            }
-            inputBuffer.rewind();
-            outputBuffer.rewind();
+            writeInput(argb);
 
-            long t0 = System.nanoTime();
-            interpreter.run(inputBuffer, outputBuffer);
-            long ms = (System.nanoTime() - t0) / 1_000_000;
+            float[] cpuMask = run(cpu, cpuReady, cpuOut, "CPU");
+            float[] clMask = run(cl, clReady, clOut, "OpenCL");
+            float[] glMask = run(gl, glReady, glOut, "OpenGL");
 
-            outputBuffer.rewind();
-            float min = Float.MAX_VALUE, max = -Float.MAX_VALUE, sum = 0;
-            int nan = 0, fg = 0;
-            for (int i = 0; i < outLen; i++) {
-                float v = outputBuffer.getFloat();
-                if (Float.isNaN(v)) {
-                    nan++;
-                    continue;
-                }
-                if (v < min) min = v;
-                if (v > max) max = v;
-                sum += v;
-                if (v > 0.5f) fg++;
+            Stats cpuS = cpuMask != null ? stats(cpuMask) : null;
+
+            if (cpuS == null) {
+                Log.i(TAG, ">>> RESULT: no CPU reference available — cannot compare <<<");
+                return;
             }
-            float mean = sum / Math.max(1, outLen - nan);
-            float coverage = 100f * fg / outLen;
-            Log.i(TAG, String.format(
-                    "MASK GL-forced: min=%.3f max=%.3f mean=%.3f coverage=%.1f%% nan=%d run=%dms",
-                    min, max, mean, coverage, nan, ms));
-            boolean valid = nan == 0 && max > 0.5f && coverage > 0.5f && coverage < 99.5f;
-            Log.i(TAG, valid
-                    ? ">>> RESULT: GL BACKEND WORKS on this GPU (valid silhouette mask) <<<"
-                    : ">>> RESULT: GL mask INVALID (zero/NaN/uniform) — GL is likely NOT the fix <<<");
+            if (!(cpuS.max > 0.5f && cpuS.coverage > 1f)) {
+                Log.i(TAG, String.format(
+                        ">>> RESULT: no clear subject in frame (CPU coverage=%.1f%%) — inconclusive, point the camera at a person <<<",
+                        cpuS.coverage));
+                return;
+            }
+
+            String clVerdict = backendVerdict(clMask, clReady, cpuMask, cpuS);
+            String glVerdict = backendVerdict(glMask, glReady, cpuMask, cpuS);
+            Log.i(TAG, "OpenCL vs CPU: " + clVerdict);
+            Log.i(TAG, "OpenGL vs CPU: " + glVerdict);
+
+            boolean glWorks = glVerdict.startsWith("MATCH");
+            boolean clBroken = glReady && (!clReady || clVerdict.startsWith("BROKEN") || clVerdict.startsWith("DIFFERS"));
+
+            if (glWorks && clBroken) {
+                Log.i(TAG, ">>> RESULT: CONFIRMED — OpenCL is broken on this GPU, OpenGL matches CPU. Forcing the GL backend is the fix. <<<");
+            } else if (glWorks) {
+                Log.i(TAG, ">>> RESULT: OpenGL works (matches CPU). OpenCL did NOT reproduce the bug here — backend/driver path differs. <<<");
+            } else if (glReady) {
+                Log.i(TAG, ">>> RESULT: OpenGL also broken on this GPU (zero/NaN/diff) — bug is in CL<->GL interop, forcing GL is NOT a fix. <<<");
+            } else {
+                Log.i(TAG, ">>> RESULT: OpenGL delegate unavailable on this GPU — cannot force GL here. <<<");
+            }
         } catch (Throwable t) {
             Log.e(TAG, "Inference FAILED — " + t, t);
         }
     }
 
-    public void close() {
-        try {
-            if (interpreter != null) {
-                interpreter.close();
-            }
-            if (delegate != null) {
-                delegate.close();
-            }
-        } catch (Throwable ignored) {
+    private float[] run(Interpreter interp, boolean ready, ByteBuffer out, String label) {
+        if (!ready || interp == null) {
+            return null;
         }
-        ready = false;
+        try {
+            inputBuffer.rewind();
+            out.rewind();
+            long t0 = System.nanoTime();
+            interp.run(inputBuffer, out);
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            float[] mask = toFloats(out);
+            Stats s = stats(mask);
+            Log.i(TAG, String.format("%-7s: max=%.3f mean=%.3f coverage=%.1f%% nan=%d run=%dms",
+                    label, s.max, s.mean, s.coverage, s.nan, ms));
+            return mask;
+        } catch (Throwable t) {
+            Log.e(TAG, label + " inference FAILED — " + t, t);
+            return null;
+        }
     }
 
-    private static ByteBuffer loadAsset(Context ctx, String name) throws Exception {
+    /** MATCH / BROKEN / DIFFERS / UNAVAILABLE for a GPU backend vs the CPU reference. */
+    private String backendVerdict(float[] mask, boolean ready, float[] cpuMask, Stats cpuS) {
+        if (!ready || mask == null) {
+            return "UNAVAILABLE";
+        }
+        Stats s = stats(mask);
+        if (s.nan > 0 || s.max < 0.1f) {
+            return String.format("BROKEN (zero/NaN: max=%.3f nan=%d while CPU coverage=%.1f%%)", s.max, s.nan, cpuS.coverage);
+        }
+        float diff = meanAbsDiff(mask, cpuMask);
+        if (diff <= MATCH_THRESHOLD) {
+            return String.format("MATCH (meanAbsDiff=%.3f)", diff);
+        }
+        return String.format("DIFFERS (meanAbsDiff=%.3f)", diff);
+    }
+
+    private void writeInput(int[] argb) {
+        inputBuffer.rewind();
+        int px = inW * inH;
+        for (int i = 0; i < px; i++) {
+            int p = argb[i];
+            inputBuffer.putFloat(((p >> 16) & 0xFF) / 255f); // R, normalized [0,1]
+            inputBuffer.putFloat(((p >> 8) & 0xFF) / 255f);  // G
+            inputBuffer.putFloat((p & 0xFF) / 255f);         // B
+        }
+    }
+
+    private float[] toFloats(ByteBuffer buf) {
+        buf.rewind();
+        float[] out = new float[outLen];
+        for (int i = 0; i < outLen; i++) {
+            out[i] = buf.getFloat();
+        }
+        return out;
+    }
+
+    private static class Stats {
+        float max, mean, coverage;
+        int nan;
+    }
+
+    private Stats stats(float[] v) {
+        Stats s = new Stats();
+        float max = -Float.MAX_VALUE, sum = 0;
+        int nan = 0, fg = 0;
+        for (float x : v) {
+            if (Float.isNaN(x)) {
+                nan++;
+                continue;
+            }
+            if (x > max) {
+                max = x;
+            }
+            sum += x;
+            if (x > 0.5f) {
+                fg++;
+            }
+        }
+        s.max = max;
+        s.mean = sum / Math.max(1, v.length - nan);
+        s.coverage = 100f * fg / v.length;
+        s.nan = nan;
+        return s;
+    }
+
+    private float meanAbsDiff(float[] a, float[] b) {
+        double sum = 0;
+        int n = Math.min(a.length, b.length);
+        for (int i = 0; i < n; i++) {
+            float x = a[i], y = b[i];
+            if (Float.isNaN(x) || Float.isNaN(y)) {
+                sum += 1.0; // NaN mismatch counts as maximal difference
+                continue;
+            }
+            sum += Math.abs(x - y);
+        }
+        return (float) (sum / Math.max(1, n));
+    }
+
+    public void close() {
+        for (Interpreter i : new Interpreter[] {cpu, cl, gl}) {
+            try {
+                if (i != null) {
+                    i.close();
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        for (GpuDelegate d : new GpuDelegate[] {clDelegate, glDelegate}) {
+            try {
+                if (d != null) {
+                    d.close();
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        cpuReady = clReady = glReady = false;
+    }
+
+    private static byte[] loadAssetBytes(Context ctx, String name) throws Exception {
         InputStream is = ctx.getAssets().open(name);
         try {
             ByteArrayOutputStream bos = new ByteArrayOutputStream(Math.max(1024, is.available()));
@@ -158,13 +304,17 @@ public class SelfieSegmenterGl {
             while ((n = is.read(chunk)) > 0) {
                 bos.write(chunk, 0, n);
             }
-            byte[] bytes = bos.toByteArray();
-            ByteBuffer bb = ByteBuffer.allocateDirect(bytes.length).order(ByteOrder.nativeOrder());
-            bb.put(bytes);
-            bb.rewind();
-            return bb;
+            return bos.toByteArray();
         } finally {
             is.close();
         }
+    }
+
+    /** TFLite needs a direct ByteBuffer that outlives the interpreter; one per interpreter. */
+    private static ByteBuffer toDirectBuffer(byte[] bytes) {
+        ByteBuffer bb = ByteBuffer.allocateDirect(bytes.length).order(ByteOrder.nativeOrder());
+        bb.put(bytes);
+        bb.rewind();
+        return bb;
     }
 }
