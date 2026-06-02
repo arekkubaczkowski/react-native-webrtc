@@ -27,10 +27,20 @@ android {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
+
+    androidResources {
+        noCompress 'tflite'
+    }
 }
 
 dependencies {
     implementation "com.facebook.react:react-android:+"
     api 'io.github.webrtc-sdk:android:144.7559.01'
     implementation "androidx.core:core:1.7.0"
+
+    // PowerVR GL-segmentation spike: own TFLite interpreter with the GPU delegate
+    // forced to the OpenGL ES backend (sidesteps the broken OpenCL path on Imagination DXT).
+    implementation 'org.tensorflow:tensorflow-lite:2.16.1'
+    implementation 'org.tensorflow:tensorflow-lite-gpu:2.16.1'
+    implementation 'org.tensorflow:tensorflow-lite-gpu-api:2.16.1'
 }

@@ -84,6 +84,14 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
         mPeerConnectionObservers = new SparseArray<>();
         localStreams = new HashMap<>();
 
+        // PowerVR GL-segmentation spike: register the GL-forced segmentation processor.
+        // Wrapped so a missing TFLite dependency can never break module init.
+        try {
+            com.oney.WebRTCModule.videoEffects.PowerVrSegmentationProcessor.register(reactContext);
+        } catch (Throwable t) {
+            Log.e(TAG, "Failed to register PowerVrSegmentationProcessor", t);
+        }
+
         WebRTCModuleOptions options = WebRTCModuleOptions.getInstance();
 
         AudioDeviceModule adm = options.audioDeviceModule;
