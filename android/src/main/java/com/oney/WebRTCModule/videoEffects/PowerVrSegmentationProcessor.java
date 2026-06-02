@@ -34,6 +34,7 @@ public class PowerVrSegmentationProcessor implements VideoFrameProcessor {
 
     private SelfieSegmenterGl segmenter; // created on segThread (GL affinity)
     private boolean initTried = false;
+    private boolean firstFrameLogged = false;
     private volatile boolean busy = false;
     private int frameCount = 0;
 
@@ -54,6 +55,11 @@ public class PowerVrSegmentationProcessor implements VideoFrameProcessor {
     @Override
     public VideoFrame process(VideoFrame frame, SurfaceTextureHelper textureHelper) {
         try {
+            if (!firstFrameLogged) {
+                firstFrameLogged = true;
+                Log.i(TAG, "first camera frame received — sampling segmentation every "
+                        + EVERY_N_FRAMES + " frames");
+            }
             if (!busy && (frameCount++ % EVERY_N_FRAMES == 0)) {
                 // Extract pixels synchronously (frame is only valid during this call),
                 // then hand the copy to the segmentation thread.

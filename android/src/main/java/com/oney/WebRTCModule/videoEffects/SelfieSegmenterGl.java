@@ -1,6 +1,7 @@
 package com.oney.WebRTCModule.videoEffects;
 
 import android.content.Context;
+import android.os.Build;
 import android.util.Log;
 
 import org.tensorflow.lite.Interpreter;
@@ -46,6 +47,15 @@ public class SelfieSegmenterGl {
     private ByteBuffer inputBuffer, cpuOut, clOut, glOut;
 
     public SelfieSegmenterGl(Context context) {
+        // Self-contained device context + an init marker: if this line appears but
+        // "Segmenter ready" never follows, construction hung (likely a delegate).
+        String soc = Build.VERSION.SDK_INT >= 31
+                ? Build.SOC_MANUFACTURER + "/" + Build.SOC_MODEL
+                : "n/a";
+        Log.i(TAG, "Initializing segmenter on " + Build.MANUFACTURER + " " + Build.MODEL
+                + " (hardware=" + Build.HARDWARE + ", soc=" + soc + ", api=" + Build.VERSION.SDK_INT
+                + ") — backends: CPU + OpenCL + OpenGL(forced)");
+
         byte[] model;
         try {
             model = loadAssetBytes(context, MODEL_ASSET);
@@ -76,6 +86,7 @@ public class SelfieSegmenterGl {
             try {
                 Interpreter.Options io = new Interpreter.Options();
                 io.addDelegate(clDelegate);
+                Log.i(TAG, "applying OpenCL delegate to interpreter...");
                 cl = new Interpreter(toDirectBuffer(model), io);
                 clReady = true;
             } catch (Throwable t) {
@@ -88,6 +99,7 @@ public class SelfieSegmenterGl {
             try {
                 Interpreter.Options io = new Interpreter.Options();
                 io.addDelegate(glDelegate);
+                Log.i(TAG, "applying OpenGL delegate to interpreter...");
                 gl = new Interpreter(toDirectBuffer(model), io);
                 glReady = true;
             } catch (Throwable t) {
@@ -106,6 +118,7 @@ public class SelfieSegmenterGl {
     }
 
     private static GpuDelegate makeDelegate(GpuDelegateFactory.Options.GpuBackend backend, String label) {
+        Log.i(TAG, "creating " + label + " delegate (forced)...");
         try {
             GpuDelegateFactory.Options opts = new GpuDelegateFactory.Options();
             opts.setForceBackend(backend);
