@@ -502,20 +502,13 @@ class GetUserMediaImpl {
         track.setEnabled(true);
         tracks.put(id, new TrackPrivate(track, videoSource, videoCaptureController, surfaceTextureHelper));
 
-        // TEMPORARY spike — remove before merge. Force-attach the PowerVR GL-segmentation
-        // processor onto every camera capture so the CPU/OpenCL/OpenGL backend comparison
-        // runs with zero JS wiring. Passthrough (never alters frames); camera captures only.
+        // TEMPORARY spike — remove before merge. Apply the device-selected camera
+        // processor (see selectCameraProcessors) with no JS wiring. Camera captures only.
         if (videoCaptureController instanceof CameraCaptureController) {
-            try {
-                VideoFrameProcessor spike = ProcessorProvider.getProcessor(PowerVrSegmentationProcessor.NAME);
-                if (spike != null) {
-                    List<VideoFrameProcessor> spikeList = new ArrayList<>();
-                    spikeList.add(spike);
-                    videoSource.setVideoProcessor(new VideoEffectProcessor(spikeList, surfaceTextureHelper));
-                    Log.i("PowerVrSegSpike", "force-attached spike processor to camera track " + id);
-                }
-            } catch (Throwable t) {
-                Log.e("PowerVrSegSpike", "failed to force-attach spike processor", t);
+            List<String> processorNames = selectCameraProcessors();
+            if (!processorNames.isEmpty()) {
+                applyProcessorsByName(videoSource, surfaceTextureHelper, processorNames);
+                Log.i("PowerVrSegSpike", "applied camera processors " + processorNames + " to track " + id);
             }
         }
 
@@ -537,29 +530,58 @@ class GetUserMediaImpl {
             VideoSource videoSource = (VideoSource) track.mediaSource;
             SurfaceTextureHelper surfaceTextureHelper = track.surfaceTextureHelper;
 
+            List<String> nameList = null;
             if (names != null) {
-                List<VideoFrameProcessor> processors =
-                        names.toArrayList()
-                                .stream()
-                                .filter(name -> name instanceof String)
-                                .map(name -> {
-                                    VideoFrameProcessor videoFrameProcessor =
-                                            ProcessorProvider.getProcessor((String) name);
-                                    if (videoFrameProcessor == null) {
-                                        Log.e(TAG, "no videoFrameProcessor associated with this name: " + name);
-                                    }
-                                    return videoFrameProcessor;
-                                })
-                                .filter(Objects::nonNull)
-                                .collect(Collectors.toList());
-
-                VideoEffectProcessor videoEffectProcessor = new VideoEffectProcessor(processors, surfaceTextureHelper);
-                videoSource.setVideoProcessor(videoEffectProcessor);
-
-            } else {
-                videoSource.setVideoProcessor(null);
+                nameList = names.toArrayList()
+                        .stream()
+                        .filter(name -> name instanceof String)
+                        .map(name -> (String) name)
+                        .collect(Collectors.toList());
             }
+            applyProcessorsByName(videoSource, surfaceTextureHelper, nameList);
         }
+    }
+
+    /**
+     * Decides which video-effect processor(s) to apply to a freshly created camera track.
+     *
+     * TEMPORARY: always selects the PowerVR GL-segmentation spike so the on-device
+     * CPU/OpenCL/OpenGL comparison runs without any app wiring. This is the single place
+     * the real fix gates on device detection, e.g.
+     *   return isPowerVr() ? Collections.singletonList(PowerVrSegmentationProcessor.NAME)
+     *                      : Collections.emptyList();
+     * Remove before merge.
+     */
+    private List<String> selectCameraProcessors() {
+        List<String> names = new ArrayList<>();
+        names.add(PowerVrSegmentationProcessor.NAME);
+        return names;
+    }
+
+    /**
+     * Attaches the named registered processors (unknown names are skipped) to a camera
+     * VideoSource, or clears the processor when {@code names} is null. Shared by
+     * {@link #setVideoEffects} and the camera-creation path so processor selection and
+     * attachment live in one place.
+     */
+    private void applyProcessorsByName(
+            VideoSource videoSource, SurfaceTextureHelper surfaceTextureHelper, List<String> names) {
+        if (names == null) {
+            videoSource.setVideoProcessor(null);
+            return;
+        }
+        List<VideoFrameProcessor> processors =
+                names.stream()
+                        .map(name -> {
+                            VideoFrameProcessor videoFrameProcessor = ProcessorProvider.getProcessor(name);
+                            if (videoFrameProcessor == null) {
+                                Log.e(TAG, "no videoFrameProcessor associated with this name: " + name);
+                            }
+                            return videoFrameProcessor;
+                        })
+                        .filter(Objects::nonNull)
+                        .collect(Collectors.toList());
+        videoSource.setVideoProcessor(new VideoEffectProcessor(processors, surfaceTextureHelper));
     }
 
     void registerTrack(AudioTrack track, AudioSource source) {
