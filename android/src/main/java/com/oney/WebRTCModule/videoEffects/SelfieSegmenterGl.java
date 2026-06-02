@@ -14,36 +14,38 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 /**
- * SPIKE: runs MediaPipe selfie segmentation on the SAME frame through three TFLite
- * backends and compares them:
- *   - CPU                       -> ground-truth mask (known good; upstream: "CPU works")
+ * SPIKE: runs a segmentation model on the SAME frame through three TFLite backends and
+ * compares them:
+ *   - CPU                       -> ground-truth output (known good; upstream: "CPU works")
  *   - GPU delegate, OpenCL      -> the backend TSVB uses; expected to break on PowerVR DXT
  *   - GPU delegate, OpenGL ES   -> the candidate fix
  *
- * One device run therefore confirms BOTH the cause and the fix at once:
- *   - CPU valid + CL zero/NaN/diff + GL ~= CPU  => CL is the bug, forcing GL is the fix (jackpot)
- *   - GL zero/NaN/diff                          => GL also broken (CL<->GL interop) — GL is not the fix
- *   - CL ~= CPU                                 => bug not reproduced in our harness (driver/path differs)
+ * One device run confirms both cause and fix:
+ *   - CPU valid + CL diverges/NaN + GL ~= CPU  => CL is the bug, forcing GL is the fix
+ *   - GL diverges/NaN                          => GL also broken (CL<->GL interop) — not the fix
+ *   - CL ~= CPU                                => bug not reproduced (driver/path differs)
  *
- * Comparing against CPU makes the verdict robust regardless of subject framing or
- * exact input normalization (all backends get the identical input).
- *
- * Model: selfiesegmentation_mlkit 256x256, input [1,256,256,3] float32 normalized to
- * [0,1] (verified), output [1,256,256,1] float32 sigmoid (>0.5 = foreground).
+ * Model: deeplabv3_257_mv_gpu — the canonical TFLite GPU-delegate segmentation model, which
+ * uses ONLY built-in ops (the MediaPipe selfie model needs the custom op
+ * Convolution2DTransposeBias, absent from the stock org.tensorflow:tensorflow-lite runtime).
+ * Input sub_7 [1,257,257,3] f32 (normalized [-1,1]); output ResizeBilinear_3 [1,257,257,21]
+ * f32 logits. The verdict only compares backends against CPU, so it is independent of the
+ * model's output semantics and scale.
  *
  * Must be constructed and used on the SAME thread (GPU delegate context affinity).
  */
 public class SelfieSegmenterGl {
     private static final String TAG = "PowerVrSegSpike";
-    private static final String MODEL_ASSET = "selfie_segmenter.tflite";
-    private static final float MATCH_THRESHOLD = 0.08f; // mean abs diff vs CPU to call a backend "matching"
+    private static final String MODEL_ASSET = "deeplabv3_257_mv_gpu.tflite";
+    private static final float MATCH_FRACTION = 0.05f;  // mean abs diff vs CPU, as a fraction of CPU's range
+    private static final float FLAT_EPS = 1e-3f;        // output range below this is "flat" (zero/constant)
 
     private Interpreter cpu, cl, gl;
     private GpuDelegate clDelegate, glDelegate;
     private boolean cpuReady, clReady, glReady;
 
-    private int inW = 256, inH = 256, inC = 3;
-    private int outLen = 256 * 256;
+    private int inW = 257, inH = 257, inC = 3;
+    private int outLen = 257 * 257 * 21;
     private ByteBuffer inputBuffer, cpuOut, clOut, glOut;
 
     public SelfieSegmenterGl(Context context) {
@@ -149,25 +151,24 @@ public class SelfieSegmenterGl {
         try {
             writeInput(argb);
 
-            float[] cpuMask = run(cpu, cpuReady, cpuOut, "CPU");
-            float[] clMask = run(cl, clReady, clOut, "OpenCL");
-            float[] glMask = run(gl, glReady, glOut, "OpenGL");
+            float[] cpuOutArr = run(cpu, cpuReady, cpuOut, "CPU");
+            float[] clOutArr = run(cl, clReady, clOut, "OpenCL");
+            float[] glOutArr = run(gl, glReady, glOut, "OpenGL");
 
-            Stats cpuS = cpuMask != null ? stats(cpuMask) : null;
-
-            if (cpuS == null) {
+            if (cpuOutArr == null) {
                 Log.i(TAG, ">>> RESULT: no CPU reference available — cannot compare <<<");
                 return;
             }
-            if (!(cpuS.max > 0.5f && cpuS.coverage > 1f)) {
+            Stats cpuStats = stats(cpuOutArr);
+            if (cpuStats.range() < FLAT_EPS) {
                 Log.i(TAG, String.format(
-                        ">>> RESULT: no clear subject in frame (CPU coverage=%.1f%%) — inconclusive, point the camera at a person <<<",
-                        cpuS.coverage));
+                        ">>> RESULT: CPU output is flat (range=%.4f) — inconclusive, point the camera at a real scene <<<",
+                        cpuStats.range()));
                 return;
             }
 
-            String clVerdict = backendVerdict(clMask, clReady, cpuMask, cpuS);
-            String glVerdict = backendVerdict(glMask, glReady, cpuMask, cpuS);
+            String clVerdict = backendVerdict(clOutArr, clReady, cpuOutArr, cpuStats);
+            String glVerdict = backendVerdict(glOutArr, glReady, cpuOutArr, cpuStats);
             Log.i(TAG, "OpenCL vs CPU: " + clVerdict);
             Log.i(TAG, "OpenGL vs CPU: " + glVerdict);
 
@@ -179,7 +180,7 @@ public class SelfieSegmenterGl {
             } else if (glWorks) {
                 Log.i(TAG, ">>> RESULT: OpenGL works (matches CPU). OpenCL did NOT reproduce the bug here — backend/driver path differs. <<<");
             } else if (glReady) {
-                Log.i(TAG, ">>> RESULT: OpenGL also broken on this GPU (zero/NaN/diff) — bug is in CL<->GL interop, forcing GL is NOT a fix. <<<");
+                Log.i(TAG, ">>> RESULT: OpenGL also broken on this GPU (NaN/diverges) — bug is in CL<->GL interop, forcing GL is NOT a fix. <<<");
             } else {
                 Log.i(TAG, ">>> RESULT: OpenGL delegate unavailable on this GPU — cannot force GL here. <<<");
             }
@@ -198,31 +199,34 @@ public class SelfieSegmenterGl {
             long t0 = System.nanoTime();
             interp.run(inputBuffer, out);
             long ms = (System.nanoTime() - t0) / 1_000_000;
-            float[] mask = toFloats(out);
-            Stats s = stats(mask);
-            Log.i(TAG, String.format("%-7s: max=%.3f mean=%.3f coverage=%.1f%% nan=%d run=%dms",
-                    label, s.max, s.mean, s.coverage, s.nan, ms));
-            return mask;
+            float[] arr = toFloats(out);
+            Stats s = stats(arr);
+            Log.i(TAG, String.format("%-7s: min=%.3f max=%.3f mean=%.3f range=%.3f nan=%d run=%dms",
+                    label, s.min, s.max, s.mean, s.range(), s.nan, ms));
+            return arr;
         } catch (Throwable t) {
             Log.e(TAG, label + " inference FAILED — " + t, t);
             return null;
         }
     }
 
-    /** MATCH / BROKEN / DIFFERS / UNAVAILABLE for a GPU backend vs the CPU reference. */
-    private String backendVerdict(float[] mask, boolean ready, float[] cpuMask, Stats cpuS) {
+    /** MATCH / DIFFERS / BROKEN / UNAVAILABLE for a GPU backend vs the CPU reference. */
+    private String backendVerdict(float[] mask, boolean ready, float[] cpuArr, Stats cpuStats) {
         if (!ready || mask == null) {
             return "UNAVAILABLE";
         }
         Stats s = stats(mask);
-        if (s.nan > 0 || s.max < 0.1f) {
-            return String.format("BROKEN (zero/NaN: max=%.3f nan=%d while CPU coverage=%.1f%%)", s.max, s.nan, cpuS.coverage);
+        if (s.nan > 0) {
+            return String.format("BROKEN (NaN: nan=%d)", s.nan);
         }
-        float diff = meanAbsDiff(mask, cpuMask);
-        if (diff <= MATCH_THRESHOLD) {
-            return String.format("MATCH (meanAbsDiff=%.3f)", diff);
+        if (s.range() < FLAT_EPS) {
+            return String.format("BROKEN (flat output range=%.4f while CPU range=%.3f)", s.range(), cpuStats.range());
         }
-        return String.format("DIFFERS (meanAbsDiff=%.3f)", diff);
+        float nd = meanAbsDiff(mask, cpuArr) / Math.max(cpuStats.range(), FLAT_EPS);
+        if (nd <= MATCH_FRACTION) {
+            return String.format("MATCH (normDiff=%.3f)", nd);
+        }
+        return String.format("DIFFERS (normDiff=%.3f)", nd);
     }
 
     private void writeInput(int[] argb) {
@@ -230,9 +234,9 @@ public class SelfieSegmenterGl {
         int px = inW * inH;
         for (int i = 0; i < px; i++) {
             int p = argb[i];
-            inputBuffer.putFloat(((p >> 16) & 0xFF) / 255f); // R, normalized [0,1]
-            inputBuffer.putFloat(((p >> 8) & 0xFF) / 255f);  // G
-            inputBuffer.putFloat((p & 0xFF) / 255f);         // B
+            inputBuffer.putFloat((((p >> 16) & 0xFF) / 127.5f) - 1f); // R, normalized [-1,1]
+            inputBuffer.putFloat((((p >> 8) & 0xFF) / 127.5f) - 1f);  // G
+            inputBuffer.putFloat(((p & 0xFF) / 127.5f) - 1f);         // B
         }
     }
 
@@ -246,30 +250,34 @@ public class SelfieSegmenterGl {
     }
 
     private static class Stats {
-        float max, mean, coverage;
+        float min, max, mean;
         int nan;
+
+        float range() {
+            return max - min;
+        }
     }
 
     private Stats stats(float[] v) {
         Stats s = new Stats();
-        float max = -Float.MAX_VALUE, sum = 0;
-        int nan = 0, fg = 0;
+        float min = Float.MAX_VALUE, max = -Float.MAX_VALUE, sum = 0;
+        int nan = 0;
         for (float x : v) {
             if (Float.isNaN(x)) {
                 nan++;
                 continue;
             }
+            if (x < min) {
+                min = x;
+            }
             if (x > max) {
                 max = x;
             }
             sum += x;
-            if (x > 0.5f) {
-                fg++;
-            }
         }
-        s.max = max;
+        s.min = (nan == v.length) ? 0 : min;
+        s.max = (nan == v.length) ? 0 : max;
         s.mean = sum / Math.max(1, v.length - nan);
-        s.coverage = 100f * fg / v.length;
         s.nan = nan;
         return s;
     }
@@ -280,8 +288,7 @@ public class SelfieSegmenterGl {
         for (int i = 0; i < n; i++) {
             float x = a[i], y = b[i];
             if (Float.isNaN(x) || Float.isNaN(y)) {
-                sum += 1.0; // NaN mismatch counts as maximal difference
-                continue;
+                continue; // NaN handled by the broken-check; don't let it dominate the average
             }
             sum += Math.abs(x - y);
         }
