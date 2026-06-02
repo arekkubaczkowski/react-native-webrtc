@@ -26,6 +26,7 @@ public class PowerVrSegmentationProcessor implements VideoFrameProcessor {
     private static final String TAG = "PowerVrSegSpike";
     public static final String NAME = "powervr-gl-seg-spike";
     private static final int EVERY_N_FRAMES = 30;
+    private static final int MAX_RUNS = 5; // stop after this many comparisons — bounds risk window + frees GPU
     private static final int SAMPLE = 256; // pre-downsample target; segmenter re-checks model size
 
     private final Context appContext;
@@ -36,7 +37,9 @@ public class PowerVrSegmentationProcessor implements VideoFrameProcessor {
     private boolean initTried = false;
     private boolean firstFrameLogged = false;
     private volatile boolean busy = false;
+    private volatile boolean done = false; // set once the spike has finished (or can't run) — stops sampling
     private int frameCount = 0;
+    private int runsCompleted = 0; // segThread only
 
     public PowerVrSegmentationProcessor(Context context) {
         this.appContext = context.getApplicationContext();
@@ -60,7 +63,7 @@ public class PowerVrSegmentationProcessor implements VideoFrameProcessor {
                 Log.i(TAG, "first camera frame received — sampling segmentation every "
                         + EVERY_N_FRAMES + " frames");
             }
-            if (!busy && (frameCount++ % EVERY_N_FRAMES == 0)) {
+            if (!done && !busy && (frameCount++ % EVERY_N_FRAMES == 0)) {
                 // Extract pixels synchronously (frame is only valid during this call),
                 // then hand the copy to the segmentation thread.
                 final int[] argb = downsampleToArgb(frame, SAMPLE, SAMPLE);
@@ -71,9 +74,20 @@ public class PowerVrSegmentationProcessor implements VideoFrameProcessor {
                             initTried = true;
                             segmenter = new SelfieSegmenterGl(appContext); // on segThread
                         }
-                        if (segmenter != null && segmenter.isReady()) {
+                        if (segmenter == null || !segmenter.isReady()) {
+                            // Construction failed or no backend loaded — don't keep retrying.
+                            done = true;
+                            Log.i(TAG, "segmenter unavailable (no backend loaded) — stopping spike.");
+                            closeSegmenter();
+                        } else {
                             segmenter.runAndLog(resizeArgb(argb, SAMPLE, SAMPLE,
                                     segmenter.inputWidth(), segmenter.inputHeight()));
+                            if (++runsCompleted >= MAX_RUNS) {
+                                done = true;
+                                Log.i(TAG, "spike complete after " + runsCompleted
+                                        + " runs — stopping and releasing interpreters. Final verdict is above.");
+                                closeSegmenter();
+                            }
                         }
                     } catch (Throwable t) {
                         Log.e(TAG, "segmentation run failed — " + t, t);
@@ -91,6 +105,14 @@ public class PowerVrSegmentationProcessor implements VideoFrameProcessor {
         // frame; returning the input means retaining once to balance the extra release.
         frame.retain();
         return frame;
+    }
+
+    /** Releases the interpreters/delegates. Must run on segThread (delegate affinity). */
+    private void closeSegmenter() {
+        if (segmenter != null) {
+            segmenter.close();
+            segmenter = null;
+        }
     }
 
     /** Downsample a VideoFrame straight to dstW x dstH ARGB (BT.601 full-range YUV->RGB). */
