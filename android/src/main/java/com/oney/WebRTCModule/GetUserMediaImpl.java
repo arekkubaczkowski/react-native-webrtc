@@ -19,8 +19,6 @@ import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.UiThreadUtil;
 import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
-import com.oney.WebRTCModule.videoEffects.CapturerFactoryInterface;
-import com.oney.WebRTCModule.videoEffects.CapturerProvider;
 import com.oney.WebRTCModule.videoEffects.ProcessorProvider;
 import com.oney.WebRTCModule.videoEffects.VideoEffectProcessor;
 import com.oney.WebRTCModule.videoEffects.VideoFrameProcessor;
@@ -46,13 +44,6 @@ class GetUserMediaImpl {
     private static final String TAG = WebRTCModule.TAG;
 
     private static final int PERMISSION_REQUEST_CODE = (int) (Math.random() * Short.MAX_VALUE);
-
-    // Read from multiple threads (getUserMedia from JS module thread, switchCamera from
-    // peer-connection threads, disposeTrack from cleanup paths). volatile gives visibility;
-    // capturerLock serializes the read+null-check+assign sequences so a stale capturer
-    // can't be reused after disposeTrack nulls it concurrently.
-    private static volatile VideoCapturer globalCustomCapturer = null;
-    private static final Object capturerLock = new Object();
 
     private CameraEnumerator cameraEnumerator;
     private final ReactApplicationContext reactContext;
@@ -232,58 +223,6 @@ class GetUserMediaImpl {
             CameraCaptureController cameraCaptureController =
                     new CameraCaptureController(currentActivity, getCameraEnumerator(), videoConstraintsMap);
 
-            boolean hasFactory = CapturerProvider.hasFactory();
-            VideoCapturer customCapturer = null;
-
-            // Atomic claim of any existing global capturer + factory state — prevents a
-            // concurrent disposeTrack from nulling it between our read and use.
-            synchronized (capturerLock) {
-                VideoCapturer existing = globalCustomCapturer;
-                if (existing != null && !hasFactory) {
-                    Log.d(TAG, "Clearing stale global custom capturer (factory removed)");
-                    globalCustomCapturer = null;
-                    existing = null;
-                }
-                if (existing != null) {
-                    Log.d(TAG, "Reusing global custom capturer");
-                    customCapturer = existing;
-                }
-            }
-
-            if (customCapturer == null && hasFactory) {
-                String cameraName = getCameraNameFromConstraints(videoConstraintsMap);
-
-                if (cameraName != null) {
-                    Log.d(TAG, "Creating custom capturer via CapturerProvider for: " + cameraName);
-
-                    CameraVideoCapturer.CameraEventsHandler eventsHandler = new CameraVideoCapturer.CameraEventsHandler() {
-                        @Override public void onCameraError(String err) { Log.e(TAG, "Custom capturer error: " + err); }
-                        @Override public void onCameraDisconnected() { Log.w(TAG, "Custom capturer disconnected"); }
-                        @Override public void onCameraFreezed(String err) { Log.w(TAG, "Custom capturer freezed: " + err); }
-                        @Override public void onCameraOpening(String name) { Log.d(TAG, "Custom capturer opening: " + name); }
-                        @Override public void onFirstFrameAvailable() { Log.d(TAG, "Custom capturer first frame"); }
-                        @Override public void onCameraClosed() { Log.d(TAG, "Custom capturer closed"); }
-                    };
-
-                    CapturerFactoryInterface factory = CapturerProvider.getFactory();
-                    VideoCapturer created = factory != null
-                            ? factory.createCapturer(cameraName, eventsHandler, getCameraEnumerator())
-                            : null;
-
-                    if (created != null) {
-                        synchronized (capturerLock) {
-                            globalCustomCapturer = created;
-                        }
-                        customCapturer = created;
-                        Log.d(TAG, "Stored custom capturer globally");
-                    }
-                }
-            }
-
-            if (customCapturer != null) {
-                cameraCaptureController.videoCapturer = customCapturer;
-            }
-
             videoTrack = createVideoTrack(cameraCaptureController);
         }
 
@@ -319,20 +258,6 @@ class GetUserMediaImpl {
     void disposeTrack(String id) {
         TrackPrivate track = tracks.remove(id);
         if (track != null) {
-            // Clear global custom capturer if this track owned it, so the next getUserMedia
-            // creates a fresh capturer via the factory. Compare-and-clear under lock so a
-            // concurrent getUserMedia can't observe a half-cleared state.
-            if (track.videoCaptureController != null) {
-                VideoCapturer owned = track.videoCaptureController.videoCapturer;
-                if (owned != null) {
-                    synchronized (capturerLock) {
-                        if (globalCustomCapturer == owned) {
-                            Log.d(TAG, "Clearing global custom capturer (track disposed)");
-                            globalCustomCapturer = null;
-                        }
-                    }
-                }
-            }
             track.dispose();
         }
     }
@@ -620,92 +545,6 @@ class GetUserMediaImpl {
                 track.dispose();
                 disposed = true;
             }
-        }
-    }
-
-    // MARK: - CapturerProvider helpers
-
-
-    private String getCameraNameFromConstraints(ReadableMap videoConstraints) {
-        String[] deviceNames = getCameraEnumerator().getDeviceNames();
-
-        // Try deviceId first
-        if (videoConstraints.hasKey("deviceId")) {
-            String requestedDeviceId = videoConstraints.getString("deviceId");
-            for (String name : deviceNames) {
-                if (name.equals(requestedDeviceId)) {
-                    return name;
-                }
-            }
-        }
-
-        // Try facingMode
-        if (videoConstraints.hasKey("facingMode")) {
-            String facingMode = videoConstraints.getString("facingMode");
-            boolean wantFront = "user".equals(facingMode);
-
-            for (String name : deviceNames) {
-                try {
-                    if (getCameraEnumerator().isFrontFacing(name) == wantFront) {
-                        return name;
-                    }
-                } catch (Exception e) {
-                    continue;
-                }
-            }
-        }
-
-        // Fallback: first available camera
-        if (deviceNames.length > 0) {
-            return deviceNames[0];
-        }
-
-        return null;
-    }
-
-    public VideoCapturer getGlobalCustomCapturer() {
-        return globalCustomCapturer;
-    }
-
-    void switchCamera(String trackId) {
-        // Snapshot once — concurrent disposeTrack may null the field between checks.
-        VideoCapturer snapshot = globalCustomCapturer;
-        if (snapshot instanceof CameraVideoCapturer) {
-            CameraVideoCapturer customCapturer = (CameraVideoCapturer) snapshot;
-            CameraEnumerator enumerator = getCameraEnumerator();
-            String[] deviceNames = enumerator.getDeviceNames();
-
-            for (String deviceName : deviceNames) {
-                try {
-                    customCapturer.switchCamera(new CameraVideoCapturer.CameraSwitchHandler() {
-                        @Override
-                        public void onCameraSwitchDone(boolean isFrontCamera) {
-                            Log.d(TAG, "Custom capturer switch done: " + (isFrontCamera ? "front" : "back"));
-                        }
-                        @Override
-                        public void onCameraSwitchError(String error) {
-                            Log.e(TAG, "Custom capturer switch error: " + error);
-                        }
-                    }, deviceName);
-                    return;
-                } catch (Exception e) {
-                    Log.w(TAG, "Failed to switch to " + deviceName, e);
-                }
-            }
-            return;
-        }
-
-        // Standard track-based camera switch
-        TrackPrivate trackPrivate = tracks.get(trackId);
-        if (trackPrivate == null || !(trackPrivate.videoCaptureController instanceof CameraCaptureController)) {
-            return;
-        }
-
-        CameraCaptureController controller = (CameraCaptureController) trackPrivate.videoCaptureController;
-        VideoCapturer videoCapturer = controller.videoCapturer;
-
-        if (videoCapturer instanceof CameraVideoCapturer) {
-            ((CameraVideoCapturer) videoCapturer).switchCamera(null);
         }
     }
 
