@@ -102,7 +102,7 @@ RCT_EXPORT_METHOD(audioDeviceModuleSetVoiceProcessingEnabled
                   : (BOOL)enabled resolver
                   : (RCTPromiseResolveBlock)resolve rejecter
                   : (RCTPromiseRejectBlock)reject) {
-    NSInteger result = [self.audioDeviceModule setVoiceProcessingEnabled:enabled];
+    NSInteger result = [self.audioDeviceModule setPlatformVoiceProcessingAllowed:enabled];
     if (result == 0) {
         resolve(nil);
     } else {
@@ -113,7 +113,7 @@ RCT_EXPORT_METHOD(audioDeviceModuleSetVoiceProcessingEnabled
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleIsVoiceProcessingEnabled) {
-    return @(self.audioDeviceModule.isVoiceProcessingEnabled);
+    return @(self.audioDeviceModule.platformAudioProcessingState.isVoiceProcessingEnabledRequested);
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleSetVoiceProcessingBypassed : (BOOL)bypassed) {
@@ -229,33 +229,88 @@ RCT_EXPORT_METHOD(audioDeviceModuleSetEngineAvailability
 
 #pragma mark - Observer Delegate Response Methods
 
-RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleResolveEngineCreated : (NSInteger)result) {
-    [self.audioDeviceModuleObserver resolveEngineCreatedWithResult:result];
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleResolveEngineCreated
+                                       : (NSInteger)requestId result
+                                       : (NSInteger)result) {
+    [self.audioDeviceModuleObserver resolveEngineCreatedWithRequestId:requestId result:result];
     return nil;
 }
 
-RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleResolveWillEnableEngine : (NSInteger)result) {
-    [self.audioDeviceModuleObserver resolveWillEnableEngineWithResult:result];
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleResolveWillEnableEngine
+                                       : (NSInteger)requestId result
+                                       : (NSInteger)result) {
+    [self.audioDeviceModuleObserver resolveWillEnableEngineWithRequestId:requestId result:result];
     return nil;
 }
 
-RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleResolveWillStartEngine : (NSInteger)result) {
-    [self.audioDeviceModuleObserver resolveWillStartEngineWithResult:result];
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleResolveWillStartEngine
+                                       : (NSInteger)requestId result
+                                       : (NSInteger)result) {
+    [self.audioDeviceModuleObserver resolveWillStartEngineWithRequestId:requestId result:result];
     return nil;
 }
 
-RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleResolveDidStopEngine : (NSInteger)result) {
-    [self.audioDeviceModuleObserver resolveDidStopEngineWithResult:result];
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleResolveDidStopEngine
+                                       : (NSInteger)requestId result
+                                       : (NSInteger)result) {
+    [self.audioDeviceModuleObserver resolveDidStopEngineWithRequestId:requestId result:result];
     return nil;
 }
 
-RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleResolveDidDisableEngine : (NSInteger)result) {
-    [self.audioDeviceModuleObserver resolveDidDisableEngineWithResult:result];
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleResolveDidDisableEngine
+                                       : (NSInteger)requestId result
+                                       : (NSInteger)result) {
+    [self.audioDeviceModuleObserver resolveDidDisableEngineWithRequestId:requestId result:result];
     return nil;
 }
 
-RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleResolveWillReleaseEngine : (NSInteger)result) {
-    [self.audioDeviceModuleObserver resolveWillReleaseEngineWithResult:result];
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleResolveWillReleaseEngine
+                                       : (NSInteger)requestId result
+                                       : (NSInteger)result) {
+    [self.audioDeviceModuleObserver resolveWillReleaseEngineWithRequestId:requestId result:result];
+    return nil;
+}
+
+#pragma mark - Handler Active State
+
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleSetEngineCreatedActive : (BOOL)isActive) {
+    self.audioDeviceModuleObserver.isEngineCreatedActive = isActive;
+    return nil;
+}
+
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleSetWillEnableEngineActive : (BOOL)isActive) {
+    self.audioDeviceModuleObserver.isWillEnableEngineActive = isActive;
+    return nil;
+}
+
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleSetWillStartEngineActive : (BOOL)isActive) {
+    self.audioDeviceModuleObserver.isWillStartEngineActive = isActive;
+    return nil;
+}
+
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleSetDidStopEngineActive : (BOOL)isActive) {
+    self.audioDeviceModuleObserver.isDidStopEngineActive = isActive;
+    return nil;
+}
+
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleSetDidDisableEngineActive : (BOOL)isActive) {
+    self.audioDeviceModuleObserver.isDidDisableEngineActive = isActive;
+    return nil;
+}
+
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleSetWillReleaseEngineActive : (BOOL)isActive) {
+    self.audioDeviceModuleObserver.isWillReleaseEngineActive = isActive;
+    return nil;
+}
+
+#pragma mark - Automatic Audio Session Configuration
+
+// Pushes the native default audio-session policy (or nil to disable). When set,
+// the observer configures the session natively in willEnable/didDisable instead
+// of doing a JS round trip - removing the JS round trip from the default path.
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(audioDeviceModuleSetAutomaticAudioSessionConfiguration
+                                       : (nullable NSDictionary *)config) {
+    self.audioDeviceModuleObserver.automaticAudioSessionConfig = config;
     return nil;
 }
 

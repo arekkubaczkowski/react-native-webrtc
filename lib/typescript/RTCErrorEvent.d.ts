@@ -1,4 +1,4 @@
-import { Event } from 'event-target-shim/index';
+import { Event } from './vendor/event-target-shim';
 declare type RTCPeerConnectionErrorFunc = 'addTransceiver' | 'getTransceivers' | 'addTrack' | 'removeTrack';
 /**
  * @brief This class Represents internal error happening on the native side as

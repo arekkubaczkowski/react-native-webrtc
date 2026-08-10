@@ -39,7 +39,7 @@ declare class Permissions {
     /**
      * Validates the given permission descriptor.
      */
-    _validatePermissionDescriptior(permissionDesc: any): void;
+    _validatePermissionDescriptor(permissionDesc: any): void;
     /**
      * Method for querying the status of a permission, according to:
      * https://www.w3.org/TR/permissions/#permissions-interface
