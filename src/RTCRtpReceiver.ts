@@ -1,11 +1,14 @@
 import { NativeModules } from 'react-native';
 
+import Logger from './Logger';
 import MediaStreamTrack from './MediaStreamTrack';
 import RTCRtpCapabilities from './RTCRtpCapabilities';
 import { RTCRtpParametersInit } from './RTCRtpParameters';
 import RTCRtpReceiveParameters from './RTCRtpReceiveParameters';
 
 const { WebRTCModule } = NativeModules;
+
+const log = new Logger('receiver');
 
 export default class RTCRtpReceiver {
     _id: string;
@@ -33,7 +36,11 @@ export default class RTCRtpReceiver {
     }
 
     getStats() {
-        return WebRTCModule.receiverGetStats(this._peerConnectionId, this._id).then(data =>
+        log.debug(`${this._peerConnectionId} ${this._id} getStats`);
+
+        return WebRTCModule.receiverGetStats(this._peerConnectionId, this._id).then(data => {
+            log.debug(`${this._peerConnectionId} ${this._id} getStats OK`);
+
             /* On both Android and iOS it is faster to construct a single
             JSON string representing the Map of StatsReports and have it
             pass through the React Native bridge rather than the Map of
@@ -42,8 +49,8 @@ export default class RTCRtpReceiver {
             Native bridge which is a bottleneck that tends to be visible in
             the UI when there is congestion involving UI-related passing.
             */
-            new Map(JSON.parse(data))
-        );
+            return new Map(JSON.parse(data));
+        });
     }
 
     getParameters(): RTCRtpReceiveParameters {
