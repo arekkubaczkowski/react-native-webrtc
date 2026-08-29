@@ -446,6 +446,15 @@ class PeerConnectionObserver implements PeerConnection.Observer {
     public void onAddTrack(final RtpReceiver receiver, final MediaStream[] mediaStreams) {
         Log.d(TAG, "onAddTrack");
 
+        // libwebrtc owns these MediaStream wrappers and disposes them on the signalling thread the
+        // moment renegotiation drops the stream, without passing through this executor. Reading the
+        // ids here, while the callback still guarantees the wrappers are alive, keeps the queued
+        // body from dereferencing one that died in between.
+        final String[] streamIds = new String[mediaStreams.length];
+        for (int i = 0; i < mediaStreams.length; i++) {
+            streamIds[i] = mediaStreams[i].getId();
+        }
+
         runIfAlive(() -> {
             RtpTransceiver transceiver = null;
             for (RtpTransceiver t : this.peerConnection.getTransceivers()) {
@@ -478,19 +487,31 @@ class PeerConnectionObserver implements PeerConnection.Observer {
             WritableMap params = Arguments.createMap();
             WritableArray streams = Arguments.createArray();
 
-            for (MediaStream stream : mediaStreams) {
+            for (int i = 0; i < mediaStreams.length; i++) {
+                final MediaStream stream = mediaStreams[i];
+                final String streamId = streamIds[i];
+
                 // Getting the streamReactTag
-                String streamReactTag = remoteStreamIds.get(stream.getId());
+                String streamReactTag = remoteStreamIds.get(streamId);
 
                 if (streamReactTag == null) {
                     streamReactTag = UUID.randomUUID().toString();
-                    remoteStreamIds.put(stream.getId(), streamReactTag);
+                    remoteStreamIds.put(streamId, streamReactTag);
                 }
 
-                // Make sure the stored stream is updated in case we get a new reference.
-                remoteStreams.put(streamReactTag, stream);
+                try {
+                    // Make sure the stored stream is updated in case we get a new reference.
+                    remoteStreams.put(streamReactTag, stream);
 
-                streams.pushMap(SerializeUtils.serializeStream(id, streamReactTag, stream));
+                    streams.pushMap(SerializeUtils.serializeStream(id, streamReactTag, stream));
+                } catch (IllegalStateException e) {
+                    // serializeStream walks the stream's track lists, which dispose() clears, so the
+                    // whole block has to be covered rather than the id read alone. A stream the SFU
+                    // has already withdrawn carries nothing actionable — the next negotiation is
+                    // authoritative — so skip it instead of taking the process down.
+                    Log.w(TAG, "Skipping a disposed remote stream " + streamId + " on pc " + id);
+                    remoteStreams.remove(streamReactTag);
+                }
             }
 
             params.putArray("streams", streams);
@@ -526,9 +547,27 @@ class PeerConnectionObserver implements PeerConnection.Observer {
         });
     };
 
-    // This is only added to compile. Plan B is not supported anymore.
+    /**
+     * Plan B is not supported anymore, so nothing here is forwarded to JS. It still has to run:
+     * libwebrtc disposes this wrapper as soon as the callback returns, and without dropping it
+     * remoteStreams keeps a disposed object forever — a leak, and a fatal throw for whichever
+     * reader touches it next. The id is read here, while the wrapper is still alive; the map is
+     * mutated on the executor, which is the only thread that owns it.
+     */
     @Override
-    public void onRemoveStream(MediaStream stream) {}
+    public void onRemoveStream(MediaStream stream) {
+        final String streamId = stream.getId();
+
+        runIfAlive(() -> {
+            // remoteStreamIds is deliberately left intact: it holds only strings, and keeping the
+            // id-to-tag mapping is what lets a re-added stream keep its React tag.
+            final String streamReactTag = remoteStreamIds.get(streamId);
+
+            if (streamReactTag != null) {
+                remoteStreams.remove(streamReactTag);
+            }
+        });
+    }
 
     // This is only added to compile. Plan B is not supported anymore.
     @Override
