@@ -5,6 +5,10 @@ import RTCRtpSender from './RTCRtpSender';
 export declare enum RTCFrameCryptorAlgorithm {
     kAesGcm = 0
 }
+export declare enum RTCKeyDerivationAlgorithm {
+    PBKDF2 = 0,
+    HKDF = 1
+}
 export declare type RTCKeyProviderOptions = {
     sharedKey: boolean;
     ratchetSalt: string | Uint8Array;
@@ -13,6 +17,7 @@ export declare type RTCKeyProviderOptions = {
     failureTolerance?: number;
     keyRingSize?: number;
     discardFrameWhenCryptorNotReady?: boolean;
+    keyDerivationAlgorithm?: RTCKeyDerivationAlgorithm;
 };
 export default class RTCFrameCryptorFactory {
     static createFrameCryptorForRtpSender(participantId: string, sender: RTCRtpSender, algorithm: RTCFrameCryptorAlgorithm, keyProvider: RTCKeyProvider): RTCFrameCryptor;

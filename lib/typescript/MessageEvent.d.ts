@@ -1,5 +1,5 @@
 /// <reference types="react-native" />
-import { Event } from 'event-target-shim/index';
+import { Event } from './vendor/event-target-shim';
 export declare type MessageEventData = string | ArrayBuffer | Blob;
 declare type MESSAGE_EVENTS = 'message' | 'messageerror';
 interface IMessageEventInitDict extends Event.EventInit {
