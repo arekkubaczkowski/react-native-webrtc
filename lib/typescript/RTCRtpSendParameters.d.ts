@@ -1,6 +1,6 @@
 import RTCRtpEncodingParameters, { RTCRtpEncodingParametersInit } from './RTCRtpEncodingParameters';
 import RTCRtpParameters, { RTCRtpParametersInit } from './RTCRtpParameters';
-declare type DegradationPreferenceType = 'maintain-framerate' | 'maintain-resolution' | 'balanced' | 'disabled';
+declare type DegradationPreferenceType = 'maintain-framerate' | 'maintain-resolution' | 'balanced' | 'disabled' | 'maintain-framerate-and-resolution';
 export interface RTCRtpSendParametersInit extends RTCRtpParametersInit {
     transactionId: string;
     encodings: RTCRtpEncodingParametersInit[];
