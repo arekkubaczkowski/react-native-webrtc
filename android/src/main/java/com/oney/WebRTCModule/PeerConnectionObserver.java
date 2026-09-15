@@ -102,7 +102,7 @@ class PeerConnectionObserver implements PeerConnection.Observer {
     /**
      * Observer callbacks arrive on the native signalling thread and are queued on the same
      * single-threaded executor dispose() runs on, so one enqueued behind dispose() would run
-     * against objects peerConnection.dispose() already freed. org.webrtc.PeerConnection keeps its
+     * against objects peerConnection.dispose() already freed. livekit.org.webrtc.PeerConnection keeps its
      * native handle in a final field that is never zeroed, so that access cannot fail safely.
      */
     private void runIfAlive(Runnable runnable) {

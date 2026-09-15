@@ -5,13 +5,13 @@ import android.graphics.SurfaceTexture;
 import android.util.Log;
 import android.view.TextureView;
 
-import org.webrtc.EglBase;
-import org.webrtc.EglRenderer;
-import org.webrtc.RendererCommon;
-import org.webrtc.RendererCommon.RendererEvents;
-import org.webrtc.RendererCommon.ScalingType;
-import org.webrtc.VideoFrame;
-import org.webrtc.VideoSink;
+import livekit.org.webrtc.EglBase;
+import livekit.org.webrtc.EglRenderer;
+import livekit.org.webrtc.RendererCommon;
+import livekit.org.webrtc.RendererCommon.RendererEvents;
+import livekit.org.webrtc.RendererCommon.ScalingType;
+import livekit.org.webrtc.VideoFrame;
+import livekit.org.webrtc.VideoSink;
 
 /**
  * A TextureView-based video renderer for WebRTC.
@@ -47,7 +47,7 @@ public class TextureViewRenderer extends TextureView
     }
 
     public void init(EglBase.Context sharedContext, RendererEvents rendererEvents) {
-        init(sharedContext, rendererEvents, EglBase.CONFIG_PLAIN, new org.webrtc.GlRectDrawer());
+        init(sharedContext, rendererEvents, EglBase.CONFIG_PLAIN, new livekit.org.webrtc.GlRectDrawer());
     }
 
     public void init(EglBase.Context sharedContext, RendererEvents rendererEvents,

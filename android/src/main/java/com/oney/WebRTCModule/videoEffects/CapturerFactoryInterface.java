@@ -2,9 +2,9 @@ package com.oney.WebRTCModule.videoEffects;
 
 import android.content.Context;
 
-import org.webrtc.CameraEnumerator;
-import org.webrtc.CameraVideoCapturer;
-import org.webrtc.VideoCapturer;
+import livekit.org.webrtc.CameraEnumerator;
+import livekit.org.webrtc.CameraVideoCapturer;
+import livekit.org.webrtc.VideoCapturer;
 
 /**
  * Factory interface for creating custom video capturers.

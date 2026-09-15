@@ -2,9 +2,9 @@ package com.oney.WebRTCModule.webrtcutils;
 
 import android.util.Log;
 
-import org.webrtc.EncodedImage;
-import org.webrtc.VideoCodecStatus;
-import org.webrtc.VideoDecoder;
+import livekit.org.webrtc.EncodedImage;
+import livekit.org.webrtc.VideoCodecStatus;
+import livekit.org.webrtc.VideoDecoder;
 
 /**
  * Wraps a Java-side {@link VideoDecoder} so that a runtime exception never escapes back into
