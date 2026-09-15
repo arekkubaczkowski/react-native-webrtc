@@ -524,13 +524,13 @@ RCT_EXPORT_METHOD(mediaStreamTrackSetVideoEffects
 
 - (void)setVideoFrameProcessor:(nullable NSObject<VideoFrameProcessorDelegate> *)processor
                     forTrackId:(nonnull NSString *)trackId {
-    RTCMediaStreamTrack *track = self.localTracks[trackId];
-    if (track == nil || ![track isKindOfClass:[RTCVideoTrack class]]) {
+    LKRTCMediaStreamTrack *track = self.localTracks[trackId];
+    if (track == nil || ![track isKindOfClass:[LKRTCVideoTrack class]]) {
         return;
     }
 
-    RTCVideoTrack *videoTrack = (RTCVideoTrack *)track;
-    RTCVideoSource *videoSource = videoTrack.source;
+    LKRTCVideoTrack *videoTrack = (LKRTCVideoTrack *)track;
+    LKRTCVideoSource *videoSource = videoTrack.source;
 
     if (processor == nil) {
         // Remove processing — set capturer delegate back to video source
