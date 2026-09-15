@@ -1,9 +1,11 @@
-import { EventTarget, Event } from 'event-target-shim/index';
 import { Constraints } from './getUserMedia';
+import { Event, EventTarget } from './vendor/event-target-shim';
 declare type MediaDevicesEventMap = {
     devicechange: Event<'devicechange'>;
 };
 declare class MediaDevices extends EventTarget<MediaDevicesEventMap> {
+    get ondevicechange(): EventTarget.CallbackFunction<this, Event<string>> | null;
+    set ondevicechange(value: EventTarget.CallbackFunction<this, Event<string>> | null);
     /**
      * W3C "Media Capture and Streams" compatible {@code enumerateDevices}
      * implementation.

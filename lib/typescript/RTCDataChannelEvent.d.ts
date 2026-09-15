@@ -1,5 +1,5 @@
-import { Event } from 'event-target-shim/index';
 import type RTCDataChannel from './RTCDataChannel';
+import { Event } from './vendor/event-target-shim';
 declare type DATA_CHANNEL_EVENTS = 'open' | 'message' | 'bufferedamountlow' | 'closing' | 'close' | 'error' | 'datachannel';
 interface IRTCDataChannelEventInitDict extends Event.EventInit {
     channel: RTCDataChannel;

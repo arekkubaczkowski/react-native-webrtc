@@ -1,5 +1,5 @@
-import { Event, EventTarget } from 'event-target-shim/index';
-declare type FRAME_CRYPTOR_EVENTS = 'onframecryptorstatechanged';
+import { Event, EventTarget } from './vendor/event-target-shim';
+declare type FRAME_CRYPTOR_EVENTS = 'framecryptorstatechanged';
 interface IRTCDataChannelEventInitDict extends Event.EventInit {
     frameCryptor: RTCFrameCryptor;
     state: RTCFrameCryptorState;
@@ -19,7 +19,7 @@ export declare class RTCFrameCryptorStateEvent<TEventType extends FRAME_CRYPTOR_
     constructor(type: TEventType, eventInitDict: IRTCDataChannelEventInitDict);
 }
 declare type RTCFrameCryptorEventMap = {
-    onframecryptorstatechanged: RTCFrameCryptorStateEvent<'onframecryptorstatechanged'>;
+    framecryptorstatechanged: RTCFrameCryptorStateEvent<FRAME_CRYPTOR_EVENTS>;
 };
 export declare enum RTCFrameCryptorState {
     FrameCryptorStateNew = 0,
@@ -43,5 +43,7 @@ export default class RTCFrameCryptor extends EventTarget<RTCFrameCryptorEventMap
     getEnabled(): Promise<boolean>;
     dispose(): Promise<void>;
     _registerEvents(): void;
+    get onframecryptorstatechanged(): EventTarget.CallbackFunction<this, Event<string>> | null;
+    set onframecryptorstatechanged(value: EventTarget.CallbackFunction<this, Event<string>> | null);
 }
 export {};

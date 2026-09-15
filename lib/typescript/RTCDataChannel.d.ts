@@ -1,6 +1,6 @@
-import { EventTarget } from 'event-target-shim/index';
 import MessageEvent from './MessageEvent';
 import RTCDataChannelEvent from './RTCDataChannelEvent';
+import { EventTarget } from './vendor/event-target-shim';
 declare type RTCDataChannelState = 'connecting' | 'open' | 'closing' | 'closed';
 declare type DataChannelEventMap = {
     bufferedamountlow: RTCDataChannelEvent<'bufferedamountlow'>;
@@ -25,6 +25,18 @@ export default class RTCDataChannel extends EventTarget<DataChannelEventMap> {
     binaryType: string;
     bufferedAmountLowThreshold: number;
     constructor(info: any);
+    get onbufferedamountlow(): EventTarget.CallbackFunction<this, import("./vendor/event-target-shim").Event<string>> | null;
+    set onbufferedamountlow(value: EventTarget.CallbackFunction<this, import("./vendor/event-target-shim").Event<string>> | null);
+    get onclose(): EventTarget.CallbackFunction<this, import("./vendor/event-target-shim").Event<string>> | null;
+    set onclose(value: EventTarget.CallbackFunction<this, import("./vendor/event-target-shim").Event<string>> | null);
+    get onclosing(): EventTarget.CallbackFunction<this, import("./vendor/event-target-shim").Event<string>> | null;
+    set onclosing(value: EventTarget.CallbackFunction<this, import("./vendor/event-target-shim").Event<string>> | null);
+    get onerror(): EventTarget.CallbackFunction<this, import("./vendor/event-target-shim").Event<string>> | null;
+    set onerror(value: EventTarget.CallbackFunction<this, import("./vendor/event-target-shim").Event<string>> | null);
+    get onmessage(): EventTarget.CallbackFunction<this, import("./vendor/event-target-shim").Event<string>> | null;
+    set onmessage(value: EventTarget.CallbackFunction<this, import("./vendor/event-target-shim").Event<string>> | null);
+    get onopen(): EventTarget.CallbackFunction<this, import("./vendor/event-target-shim").Event<string>> | null;
+    set onopen(value: EventTarget.CallbackFunction<this, import("./vendor/event-target-shim").Event<string>> | null);
     get bufferedAmount(): number;
     get label(): string;
     get id(): number;

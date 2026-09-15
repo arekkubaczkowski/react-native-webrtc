@@ -1,6 +1,6 @@
-import { EventTarget } from 'event-target-shim/index';
 import MediaStreamTrack, { MediaStreamTrackInfo } from './MediaStreamTrack';
 import MediaStreamTrackEvent from './MediaStreamTrackEvent';
+import { EventTarget } from './vendor/event-target-shim';
 declare type MediaStreamEventMap = {
     addtrack: MediaStreamTrackEvent<'addtrack'>;
     removetrack: MediaStreamTrackEvent<'removetrack'>;
@@ -33,6 +33,10 @@ export default class MediaStream extends EventTarget<MediaStreamEventMap> {
         streamReactTag: string;
         tracks: MediaStreamTrackInfo[];
     });
+    get onaddtrack(): EventTarget.CallbackFunction<this, import("./vendor/event-target-shim").Event<string>> | null;
+    set onaddtrack(value: EventTarget.CallbackFunction<this, import("./vendor/event-target-shim").Event<string>> | null);
+    get onremovetrack(): EventTarget.CallbackFunction<this, import("./vendor/event-target-shim").Event<string>> | null;
+    set onremovetrack(value: EventTarget.CallbackFunction<this, import("./vendor/event-target-shim").Event<string>> | null);
     get id(): string;
     get active(): boolean;
     addTrack(track: MediaStreamTrack): void;

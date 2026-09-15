@@ -3,6 +3,7 @@ export interface RTCRtpEncodingParametersInit {
     rid?: string;
     maxFramerate?: number;
     maxBitrate?: number;
+    minBitrate?: number;
     scaleResolutionDownBy?: number;
 }
 export default class RTCRtpEncodingParameters {
@@ -10,6 +11,7 @@ export default class RTCRtpEncodingParameters {
     _rid: string | null;
     _maxFramerate: number | null;
     _maxBitrate: number | null;
+    _minBitrate: number | null;
     _scaleResolutionDownBy: number | null;
     constructor(init: RTCRtpEncodingParametersInit);
     get rid(): string | null;
@@ -17,6 +19,8 @@ export default class RTCRtpEncodingParameters {
     set maxFramerate(framerate: number | null);
     get maxBitrate(): number | null;
     set maxBitrate(bitrate: number | null);
+    get minBitrate(): number | null;
+    set minBitrate(bitrate: number | null);
     get scaleResolutionDownBy(): number | null;
     set scaleResolutionDownBy(resolutionScale: number | null);
     toJSON(): RTCRtpEncodingParametersInit;

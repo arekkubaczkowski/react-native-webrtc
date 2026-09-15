@@ -1,5 +1,5 @@
-import { EventTarget, Event } from 'event-target-shim/index';
 import { MediaTrackConstraints } from './Constraints';
+import { Event, EventTarget } from './vendor/event-target-shim';
 declare type MediaStreamTrackState = 'live' | 'ended';
 export declare type MediaStreamTrackInfo = {
     id: string;
@@ -36,6 +36,12 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     readonly label: string;
     readonly remote: boolean;
     constructor(info: MediaStreamTrackInfo);
+    get onended(): EventTarget.CallbackFunction<this, Event<string>> | null;
+    set onended(value: EventTarget.CallbackFunction<this, Event<string>> | null);
+    get onmute(): EventTarget.CallbackFunction<this, Event<string>> | null;
+    set onmute(value: EventTarget.CallbackFunction<this, Event<string>> | null);
+    get onunmute(): EventTarget.CallbackFunction<this, Event<string>> | null;
+    set onunmute(value: EventTarget.CallbackFunction<this, Event<string>> | null);
     get enabled(): boolean;
     set enabled(enabled: boolean);
     get muted(): boolean;
