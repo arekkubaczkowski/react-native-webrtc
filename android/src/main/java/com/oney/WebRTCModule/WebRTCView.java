@@ -325,8 +325,11 @@ public class WebRTCView extends ViewGroup {
                     try {
                         ReactContext reactContext = (ReactContext) getContext();
                         WritableMap params = Arguments.createMap();
-                        params.putInt("width", videoWidth);
-                        params.putInt("height", videoHeight);
+                        // The renderer reports the buffer size; JS gets the displayed
+                        // size, as iOS reports it.
+                        boolean isRotated = rotation % 180 != 0;
+                        params.putInt("width", isRotated ? videoHeight : videoWidth);
+                        params.putInt("height", isRotated ? videoWidth : videoHeight);
 
                         // Send the event through React Native's event system
                         reactContext.getJSModule(RCTEventEmitter.class)
