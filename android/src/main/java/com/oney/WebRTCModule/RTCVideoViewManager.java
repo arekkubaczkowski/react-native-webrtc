@@ -136,13 +136,9 @@ public class RTCVideoViewManager extends SimpleViewManager<WebRTCView> {
         view.setUseTextureView(useTextureView);
     }
 
-    /**
-     * Prototype switch for GL re-framing of the SurfaceView renderer: "off" (default),
-     * "immediate" or "animated". Ignored while useTextureView is true.
-     */
-    @ReactProp(name = "faceReframeMode")
-    public void setFaceReframeMode(WebRTCView view, String mode) {
-        view.setFaceReframeMode(mode);
+    @ReactProp(name = "useFaceReframe")
+    public void setUseFaceReframe(WebRTCView view, boolean enabled) {
+        view.setUseFaceReframe(enabled);
     }
 
     @Override

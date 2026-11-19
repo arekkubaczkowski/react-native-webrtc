@@ -173,16 +173,8 @@ public class WebRTCView extends ViewGroup {
     private boolean useTextureView = false;
     private TextureViewRenderer textureViewRenderer;
 
-    /**
-     * Prototype: re-frame the SurfaceView stage by changing what the GL drawer samples
-     * (immediate or animated) instead of relying on EglRenderer's centered crop. OFF keeps the
-     * stock drawer and the original prop handling.
-     */
-    private static final int FACE_REFRAME_OFF = 0;
-    private static final int FACE_REFRAME_IMMEDIATE = 1;
-    private static final int FACE_REFRAME_ANIMATED = 2;
     private static final long FACE_REFRAME_DURATION_NS = 280_000_000L;
-    private int faceReframeMode = FACE_REFRAME_OFF;
+    private boolean useFaceReframe;
     private volatile FaceReframeGlDrawer faceReframeDrawer;
     private boolean customTransformPending;
     private float committedScale = Float.NaN;
@@ -458,7 +450,6 @@ public class WebRTCView extends ViewGroup {
         FaceReframeGeometry.Transition next;
         if (sameGeometry
                 && reframeTransition != null
-                && faceReframeMode == FACE_REFRAME_ANIMATED
                 && ValueAnimator.areAnimatorsEnabled()) {
             long now = System.nanoTime();
             FaceReframeGeometry.windowAt(reframeTransition, now, reframePresentedWindow);
@@ -799,7 +790,7 @@ public class WebRTCView extends ViewGroup {
                 });
             } else {
                 try {
-                    if (faceReframeMode != FACE_REFRAME_OFF) {
+                    if (useFaceReframe) {
                         FaceReframeGlDrawer drawer = new FaceReframeGlDrawer();
                         surfaceViewRenderer.init(sharedContext, rendererEvents, EglBase.CONFIG_PLAIN, drawer);
                         faceReframeDrawer = drawer;
@@ -871,11 +862,11 @@ public class WebRTCView extends ViewGroup {
     }
 
     private boolean isFaceReframeActive() {
-        return faceReframeMode != FACE_REFRAME_OFF && !useTextureView;
+        return useFaceReframe && !useTextureView;
     }
 
     /**
-     * With the prototype active, X, Y and scale are only recorded here and applied together by
+     * When face reframing is active, X, Y and scale are only recorded here and applied together by
      * {@link #commitPendingCustomTransform()} once per prop transaction.
      */
     private void onCustomTransformChanged() {
@@ -907,27 +898,16 @@ public class WebRTCView extends ViewGroup {
         }
     }
 
-    /**
-     * Prototype switch: "off" (default), "immediate" or "animated". Switching between off and
-     * on re-initialises the SurfaceView renderer because the drawer is fixed at init.
-     */
-    public void setFaceReframeMode(String mode) {
-        int next = FACE_REFRAME_OFF;
-        if ("immediate".equals(mode)) {
-            next = FACE_REFRAME_IMMEDIATE;
-        } else if ("animated".equals(mode)) {
-            next = FACE_REFRAME_ANIMATED;
-        }
-        if (next == faceReframeMode) {
+    public void setUseFaceReframe(boolean enabled) {
+        if (useFaceReframe == enabled) {
             return;
         }
-        boolean drawerChanges = (next == FACE_REFRAME_OFF) != (faceReframeMode == FACE_REFRAME_OFF);
-        faceReframeMode = next;
+        useFaceReframe = enabled;
         customTransformPending = false;
         committedScale = Float.NaN;
         committedTranslateX = Float.NaN;
         committedTranslateY = Float.NaN;
-        if (drawerChanges && rendererAttached && !useTextureView) {
+        if (rendererAttached && !useTextureView) {
             removeRendererFromVideoTrack();
             tryAddRendererToVideoTrack();
         }
