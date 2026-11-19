@@ -11,6 +11,13 @@ export interface RTCVideoViewProps extends ViewProps {
     customTranslateY?: number;
     useCustomTransform?: boolean;
     /**
+     * Android only, prototype. Re-frames the SurfaceView renderer through its GL
+     * drawer instead of EglRenderer's centered crop. Ignored with useTextureView.
+     *
+     * Defaults to 'off'.
+     */
+    faceReframeMode?: 'off' | 'immediate' | 'animated';
+    /**
      * Android only. When true, uses TextureViewRenderer instead of
      * SurfaceViewRenderer. TextureView renders in the normal View hierarchy
      * and supports borderRadius, overflow:hidden, and other clipping.
