@@ -431,8 +431,33 @@ RCT_EXPORT_METHOD(mediaStreamTrackRelease : (nonnull NSString *)trackID) {
         track.isEnabled = NO;
         [track.captureController stopCapture];
         [self.localTracks removeObjectForKey:trackID];
+        [self removeReleasedTrackFromLocalStreams:track];
     }
 #endif
+}
+
+// JS never releases the streams getUserMedia or `new MediaStream([track])` created, so a released
+// track would stay alive inside them, and the emptied streams in localStreams, for the app's lifetime.
+- (void)removeReleasedTrackFromLocalStreams:(LKRTCMediaStreamTrack *)track {
+    BOOL isAudio = [track.kind isEqualToString:@"audio"];
+    NSMutableArray<NSString *> *emptiedStreamIds = [NSMutableArray new];
+
+    for (NSString *streamId in self.localStreams) {
+        LKRTCMediaStream *stream = self.localStreams[streamId];
+        if (isAudio && [stream.audioTracks containsObject:(LKRTCAudioTrack *)track]) {
+            [stream removeAudioTrack:(LKRTCAudioTrack *)track];
+        } else if (!isAudio && [stream.videoTracks containsObject:(LKRTCVideoTrack *)track]) {
+            [stream removeVideoTrack:(LKRTCVideoTrack *)track];
+        } else {
+            continue;
+        }
+
+        if (stream.audioTracks.count == 0 && stream.videoTracks.count == 0) {
+            [emptiedStreamIds addObject:streamId];
+        }
+    }
+
+    [self.localStreams removeObjectsForKeys:emptiedStreamIds];
 }
 
 RCT_EXPORT_METHOD(mediaStreamTrackSetEnabled : (nonnull NSNumber *)pcId : (nonnull NSString *)trackID : (BOOL)enabled) {

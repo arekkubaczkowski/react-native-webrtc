@@ -26,6 +26,7 @@ import com.oney.WebRTCModule.webrtcutils.H264AndSoftwareVideoEncoderFactory;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -906,13 +907,21 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
             track.setEnabled(false);
 
             // MediaStream.dispose() throws on a track disposed while still in it, and a released track
-            // can't be found by id anymore to remove it later.
+            // can't be found by id anymore to remove it later. JS never releases the streams getUserMedia
+            // or `new MediaStream([track])` created, so the streams this empties are dropped here.
             String kind = track.kind();
-            for (MediaStream stream : localStreams.values()) {
+            Iterator<MediaStream> streams = localStreams.values().iterator();
+            while (streams.hasNext()) {
+                MediaStream stream = streams.next();
+                boolean removed = false;
                 if ("audio".equals(kind)) {
-                    stream.removeTrack((AudioTrack) track);
+                    removed = stream.removeTrack((AudioTrack) track);
                 } else if ("video".equals(kind)) {
-                    stream.removeTrack((VideoTrack) track);
+                    removed = stream.removeTrack((VideoTrack) track);
+                }
+                if (removed && stream.audioTracks.isEmpty() && stream.videoTracks.isEmpty()) {
+                    streams.remove();
+                    stream.dispose();
                 }
             }
             getUserMediaImpl.disposeTrack(id);
