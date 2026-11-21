@@ -19,6 +19,25 @@
 #import "RTCVideoViewManager.h"
 #import "WebRTCModule.h"
 
+#if !TARGET_OS_OSX
+// LiveKitWebRTC multiplies the Metal drawable by the display scale, so a 720p
+// frame gets a 2160x3840 drawable on a 3x screen. Upstream WebRTC sizes it to
+// the frame, and Core Animation scales it to the view with the same content
+// mode, so the picture is unchanged while each drawable is 9x smaller.
+// currentScaleFactor is private: if a LiveKitWebRTC release drops it, this
+// override is never called and the old sizing comes back.
+@interface RTCFrameSizedMTLVideoView : LKRTCMTLVideoView
+@end
+
+@implementation RTCFrameSizedMTLVideoView
+
+- (CGFloat)currentScaleFactor {
+    return 1.0;
+}
+
+@end
+#endif
+
 /**
  * Implements an equivalent of {@code HTMLVideoElement} i.e. Web's video
  * element.
@@ -113,7 +132,7 @@
         subview.wantsLayer = true;
         _videoView = subview;
 #else
-        LKRTCMTLVideoView *subview = [[LKRTCMTLVideoView alloc] initWithFrame:CGRectZero];
+        LKRTCMTLVideoView *subview = [[RTCFrameSizedMTLVideoView alloc] initWithFrame:CGRectZero];
         _videoView = subview;
 #endif
         _objectFit = RTCVideoViewObjectFitCover;
