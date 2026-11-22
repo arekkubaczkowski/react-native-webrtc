@@ -34,24 +34,42 @@ final class FaceReframeGlDrawer implements RendererCommon.GlDrawer {
     }
 
     @Override
-    public void drawOes(int oesTextureId, float[] texMatrix, int frameWidth, int frameHeight,
-                        int viewportX, int viewportY, int viewportWidth, int viewportHeight) {
-        delegate.drawOes(oesTextureId, reframe(texMatrix), frameWidth, frameHeight,
-                viewportX, viewportY, viewportWidth, viewportHeight);
+    public void drawOes(int oesTextureId, float[] texMatrix, int frameWidth, int frameHeight, int viewportX,
+            int viewportY, int viewportWidth, int viewportHeight) {
+        delegate.drawOes(oesTextureId,
+                reframe(texMatrix),
+                frameWidth,
+                frameHeight,
+                viewportX,
+                viewportY,
+                viewportWidth,
+                viewportHeight);
     }
 
     @Override
-    public void drawRgb(int textureId, float[] texMatrix, int frameWidth, int frameHeight,
-                        int viewportX, int viewportY, int viewportWidth, int viewportHeight) {
-        delegate.drawRgb(textureId, reframe(texMatrix), frameWidth, frameHeight,
-                viewportX, viewportY, viewportWidth, viewportHeight);
+    public void drawRgb(int textureId, float[] texMatrix, int frameWidth, int frameHeight, int viewportX, int viewportY,
+            int viewportWidth, int viewportHeight) {
+        delegate.drawRgb(textureId,
+                reframe(texMatrix),
+                frameWidth,
+                frameHeight,
+                viewportX,
+                viewportY,
+                viewportWidth,
+                viewportHeight);
     }
 
     @Override
-    public void drawYuv(int[] yuvTextures, float[] texMatrix, int frameWidth, int frameHeight,
-                        int viewportX, int viewportY, int viewportWidth, int viewportHeight) {
-        delegate.drawYuv(yuvTextures, reframe(texMatrix), frameWidth, frameHeight,
-                viewportX, viewportY, viewportWidth, viewportHeight);
+    public void drawYuv(int[] yuvTextures, float[] texMatrix, int frameWidth, int frameHeight, int viewportX,
+            int viewportY, int viewportWidth, int viewportHeight) {
+        delegate.drawYuv(yuvTextures,
+                reframe(texMatrix),
+                frameWidth,
+                frameHeight,
+                viewportX,
+                viewportY,
+                viewportWidth,
+                viewportHeight);
     }
 
     @Override

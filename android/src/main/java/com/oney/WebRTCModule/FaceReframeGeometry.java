@@ -27,8 +27,8 @@ final class FaceReframeGeometry {
         final float windowWidth;
         final float windowHeight;
 
-        Placement(int left, int top, int right, int bottom, boolean hasWindow,
-                  float windowX, float windowY, float windowWidth, float windowHeight) {
+        Placement(int left, int top, int right, int bottom, boolean hasWindow, float windowX, float windowY,
+                float windowWidth, float windowHeight) {
             this.left = left;
             this.top = top;
             this.right = right;
@@ -41,20 +41,13 @@ final class FaceReframeGeometry {
         }
 
         boolean sameBounds(Placement other) {
-            return other != null
-                    && left == other.left
-                    && top == other.top
-                    && right == other.right
+            return other != null && left == other.left && top == other.top && right == other.right
                     && bottom == other.bottom;
         }
 
         boolean sameWindow(Placement other) {
-            return other != null
-                    && hasWindow == other.hasWindow
-                    && windowX == other.windowX
-                    && windowY == other.windowY
-                    && windowWidth == other.windowWidth
-                    && windowHeight == other.windowHeight;
+            return other != null && hasWindow == other.hasWindow && windowX == other.windowX && windowY == other.windowY
+                    && windowWidth == other.windowWidth && windowHeight == other.windowHeight;
         }
     }
 
@@ -63,8 +56,8 @@ final class FaceReframeGeometry {
      * produced, so the hard clip to the container is unchanged. The window is the slice of the
      * scaled, translated video rectangle that falls inside those bounds.
      */
-    static Placement place(int containerWidth, int containerHeight, int baseWidth, int baseHeight,
-                           float scale, float translateX, float translateY) {
+    static Placement place(int containerWidth, int containerHeight, int baseWidth, int baseHeight, float scale,
+            float translateX, float translateY) {
         int scaledWidth = (int) (baseWidth * scale);
         int scaledHeight = (int) (baseHeight * scale);
         int centerX = containerWidth / 2;
@@ -81,7 +74,11 @@ final class FaceReframeGeometry {
         if (scaledWidth <= 0 || scaledHeight <= 0 || right <= left || bottom <= top) {
             return new Placement(left, top, right, bottom, false, 0f, 0f, 1f, 1f);
         }
-        return new Placement(left, top, right, bottom, true,
+        return new Placement(left,
+                top,
+                right,
+                bottom,
+                true,
                 (left - rawLeft) / (float) scaledWidth,
                 (top - rawTop) / (float) scaledHeight,
                 (right - left) / (float) scaledWidth,
@@ -103,9 +100,8 @@ final class FaceReframeGeometry {
         /** Aspect EglRenderer uses for its centered crop: renderer width / height as float. */
         final float boundsAspect;
 
-        Transition(float fromX, float fromY, float fromWidth, float fromHeight,
-                   float toX, float toY, float toWidth, float toHeight,
-                   long startNs, long durationNs, float boundsAspect) {
+        Transition(float fromX, float fromY, float fromWidth, float fromHeight, float toX, float toY, float toWidth,
+                float toHeight, long startNs, long durationNs, float boundsAspect) {
             this.fromX = fromX;
             this.fromY = fromY;
             this.fromWidth = fromWidth;
@@ -120,10 +116,17 @@ final class FaceReframeGeometry {
         }
 
         static Transition snap(Placement placement, float boundsAspect) {
-            return new Transition(
-                    placement.windowX, placement.windowY, placement.windowWidth, placement.windowHeight,
-                    placement.windowX, placement.windowY, placement.windowWidth, placement.windowHeight,
-                    0L, 0L, boundsAspect);
+            return new Transition(placement.windowX,
+                    placement.windowY,
+                    placement.windowWidth,
+                    placement.windowHeight,
+                    placement.windowX,
+                    placement.windowY,
+                    placement.windowWidth,
+                    placement.windowHeight,
+                    0L,
+                    0L,
+                    boundsAspect);
         }
     }
 
@@ -183,10 +186,8 @@ final class FaceReframeGeometry {
         float scaleY = (y1 - y0) / sy;
         float offsetX = 0.5f + (x0 - 0.5f) / sx;
         float offsetY = 0.5f + (bottomUp - 0.5f) / sy;
-        if (Math.abs(scaleX - 1f) < IDENTITY_EPSILON
-                && Math.abs(scaleY - 1f) < IDENTITY_EPSILON
-                && Math.abs(offsetX) < IDENTITY_EPSILON
-                && Math.abs(offsetY) < IDENTITY_EPSILON) {
+        if (Math.abs(scaleX - 1f) < IDENTITY_EPSILON && Math.abs(scaleY - 1f) < IDENTITY_EPSILON
+                && Math.abs(offsetX) < IDENTITY_EPSILON && Math.abs(offsetY) < IDENTITY_EPSILON) {
             return false;
         }
         out[0] = scaleX;
