@@ -141,6 +141,11 @@ public class RTCVideoViewManager extends SimpleViewManager<WebRTCView> {
         view.setUseFaceReframe(enabled);
     }
 
+    @ReactProp(name = "surfaceMaskRadius")
+    public void setSurfaceMaskRadius(WebRTCView view, float radiusDp) {
+        view.setSurfaceMaskRadius(radiusDp);
+    }
+
     @Override
     protected void onAfterUpdateTransaction(WebRTCView view) {
         super.onAfterUpdateTransaction(view);

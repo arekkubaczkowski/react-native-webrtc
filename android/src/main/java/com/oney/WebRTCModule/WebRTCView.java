@@ -5,6 +5,7 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Matrix;
+import android.graphics.PixelFormat;
 import android.graphics.Point;
 import android.util.Log;
 import android.view.View;
@@ -186,6 +187,9 @@ public class WebRTCView extends ViewGroup {
     private int reframeContainerHeight;
     private float reframeFrameAspect;
     private final float[] reframePresentedWindow = new float[4];
+    private float surfaceMaskRadiusPx;
+    private int maskedStreamRequest;
+    private boolean maskedRendererDetaching;
 
     public WebRTCView(Context context) {
         super(context);
@@ -206,7 +210,7 @@ public class WebRTCView extends ViewGroup {
             // TextureView doesn't support setBackgroundColor/setBackgroundDrawable
             textureViewRenderer.clearImage();
         } else {
-            surfaceViewRenderer.setBackgroundColor(Color.BLACK);
+            surfaceViewRenderer.setBackgroundColor(hasSurfaceMask() ? Color.TRANSPARENT : Color.BLACK);
             surfaceViewRenderer.clearImage();
         }
     }
@@ -382,7 +386,17 @@ public class WebRTCView extends ViewGroup {
             scalingType = this.scalingType;
         }
 
-        if (useCustomTransform && frameWidth > 0 && frameHeight > 0) {
+        if (hasSurfaceMask()) {
+            layoutRenderer(0, 0, width, height);
+            if (useCustomTransform && frameWidth > 0 && frameHeight > 0) {
+                float frameAspect = computeFrameAspectRatio(frameWidth, frameHeight, frameRotation);
+                FaceReframeGeometry.Placement placement = FaceReframeGeometry.cover(
+                        width, height, frameAspect, customScale, customTranslateX, customTranslateY);
+                publishFaceReframe(placement, width, height, frameWidth, frameHeight, frameRotation);
+            } else {
+                resetFaceReframe();
+            }
+        } else if (useCustomTransform && frameWidth > 0 && frameHeight > 0) {
             layoutWithCustomTransform(width, height, frameWidth, frameHeight, frameRotation);
         } else {
             resetFaceReframe();
@@ -544,19 +558,29 @@ public class WebRTCView extends ViewGroup {
         if (rendererAttached) {
             resetFaceReframe();
             faceReframeDrawer = null;
-            if (videoTrack != null) {
+            final boolean masked = hasSurfaceMask();
+            final VideoTrack attachedTrack = videoTrack;
+            if (attachedTrack != null) {
                 final boolean isTexture = useTextureView && textureViewRenderer != null;
+                maskedRendererDetaching = masked;
                 ThreadUtils.runOnExecutor(() -> {
                     try {
                         if (isTexture) {
-                            videoTrack.removeSink(textureViewRenderer);
+                            attachedTrack.removeSink(textureViewRenderer);
                         } else {
-                            videoTrack.removeSink(surfaceViewRenderer);
+                            attachedTrack.removeSink(surfaceViewRenderer);
                         }
                     } catch (Throwable tr) {
                         // XXX If WebRTCModule#mediaStreamTrackRelease has already been
                         // invoked on videoTrack, then it is no longer safe to call removeSink
                         // on the instance, it will throw IllegalStateException.
+                    } finally {
+                        if (masked) {
+                            post(() -> {
+                                maskedRendererDetaching = false;
+                                tryAddRendererToVideoTrack();
+                            });
+                        }
                     }
                 });
             }
@@ -565,6 +589,10 @@ public class WebRTCView extends ViewGroup {
                 textureViewRenderer.release();
             } else {
                 surfaceViewRenderer.release();
+                if (masked) {
+                    // Destroy the masked layer so its last buffer cannot remain visible.
+                    surfaceViewRenderer.setVisibility(View.INVISIBLE);
+                }
             }
             surfaceViewRendererInstances--;
             rendererAttached = false;
@@ -664,6 +692,18 @@ public class WebRTCView extends ViewGroup {
      */
     void setStreamURL(String streamURL) {
         Log.d(TAG, "Set stream URL " + streamURL + " current: " + this.streamURL);
+        final boolean masked = hasSurfaceMask();
+        if (masked) {
+            // A replacement may arrive while the previous URL is still resolving.
+            final int request = ++maskedStreamRequest;
+            getVideoTrackForStreamURL(streamURL, track -> {
+                if (request == maskedStreamRequest) {
+                    this.streamURL = streamURL;
+                    setVideoTrack(track);
+                }
+            });
+            return;
+        }
         if (Objects.equals(streamURL, this.streamURL)) {
             return;
         }
@@ -715,7 +755,7 @@ public class WebRTCView extends ViewGroup {
 
             if (videoTrack != null) {
                 tryAddRendererToVideoTrack();
-                if (oldVideoTrack == null) {
+                if (oldVideoTrack == null && !hasSurfaceMask()) {
                     // If there was no old track, clean the surface so we start
                     // with black.
                     cleanSurfaceViewRenderer();
@@ -755,7 +795,8 @@ public class WebRTCView extends ViewGroup {
      * all preconditions for the start of rendering are met.
      */
     private void tryAddRendererToVideoTrack() {
-        if (!rendererAttached && videoTrack != null && ViewCompat.isAttachedToWindow(this)) {
+        if (!rendererAttached && !maskedRendererDetaching
+                && videoTrack != null && ViewCompat.isAttachedToWindow(this)) {
             EglBase.Context sharedContext = EglUtils.getRootEglBaseContext();
 
             if (sharedContext == null) {
@@ -763,6 +804,7 @@ public class WebRTCView extends ViewGroup {
                 return;
             }
 
+            final VideoTrack trackToAttach = videoTrack;
             if (useTextureView) {
                 if (textureViewRenderer == null) {
                     textureViewRenderer = new TextureViewRenderer(getContext());
@@ -783,14 +825,20 @@ public class WebRTCView extends ViewGroup {
 
                 ThreadUtils.runOnExecutor(() -> {
                     try {
-                        videoTrack.addSink(textureViewRenderer);
+                        trackToAttach.addSink(textureViewRenderer);
                     } catch (Throwable tr) {
                         Log.e(TAG, "Failed to add renderer", tr);
                     }
                 });
             } else {
                 try {
-                    if (useFaceReframe) {
+                    if (hasSurfaceMask()) {
+                        FaceReframeGlDrawer drawer = new FaceReframeGlDrawer(
+                                new MaskedGlDrawer(surfaceMaskRadiusPx));
+                        surfaceViewRenderer.init(sharedContext, rendererEvents, EglBase.CONFIG_RGBA, drawer);
+                        faceReframeDrawer = drawer;
+                        surfaceViewRenderer.setVisibility(View.VISIBLE);
+                    } else if (useFaceReframe) {
                         FaceReframeGlDrawer drawer = new FaceReframeGlDrawer();
                         surfaceViewRenderer.init(sharedContext, rendererEvents, EglBase.CONFIG_PLAIN, drawer);
                         faceReframeDrawer = drawer;
@@ -805,7 +853,7 @@ public class WebRTCView extends ViewGroup {
 
                 ThreadUtils.runOnExecutor(() -> {
                     try {
-                        videoTrack.addSink(surfaceViewRenderer);
+                        trackToAttach.addSink(surfaceViewRenderer);
                     } catch (Throwable tr) {
                         Log.e(TAG, "Failed to add renderer", tr);
                     }
@@ -813,6 +861,9 @@ public class WebRTCView extends ViewGroup {
             }
 
             rendererAttached = true;
+            if (hasSurfaceMask()) {
+                requestSurfaceViewRendererLayout();
+            }
         }
     }
 
@@ -870,7 +921,7 @@ public class WebRTCView extends ViewGroup {
      * {@link #commitPendingCustomTransform()} once per prop transaction.
      */
     private void onCustomTransformChanged() {
-        if (isFaceReframeActive()) {
+        if (isFaceReframeActive() || hasSurfaceMask()) {
             customTransformPending = true;
         } else {
             applyCustomTransformOrRequestLayout();
@@ -990,6 +1041,28 @@ public class WebRTCView extends ViewGroup {
         }
     }
 
+    /** Set with initial props, before the SurfaceHolder creates the window surface. */
+    void setSurfaceMaskRadius(float radiusDp) {
+        if (ViewCompat.isAttachedToWindow(this)) {
+            return;
+        }
+        boolean wasMasked = surfaceMaskRadiusPx > 0f;
+        surfaceMaskRadiusPx = Float.isFinite(radiusDp) && radiusDp > 0f
+                ? radiusDp * getResources().getDisplayMetrics().density : 0f;
+        if (surfaceMaskRadiusPx > 0f) {
+            surfaceViewRenderer.getHolder().setFormat(PixelFormat.RGBA_8888);
+            surfaceViewRenderer.setBackgroundColor(Color.TRANSPARENT);
+            surfaceViewRenderer.setVisibility(View.INVISIBLE);
+        } else if (wasMasked) {
+            surfaceViewRenderer.getHolder().setFormat(PixelFormat.OPAQUE);
+            surfaceViewRenderer.setVisibility(useTextureView ? View.GONE : View.VISIBLE);
+        }
+    }
+
+    private boolean hasSurfaceMask() {
+        return !useTextureView && surfaceMaskRadiusPx > 0f;
+    }
+
     /**
      * Switches between SurfaceViewRenderer and TextureViewRenderer.
      * TextureView renders in the normal View hierarchy and supports
@@ -1031,7 +1104,7 @@ public class WebRTCView extends ViewGroup {
             if (textureViewRenderer != null) {
                 textureViewRenderer.setVisibility(View.GONE);
             }
-            surfaceViewRenderer.setVisibility(View.VISIBLE);
+            surfaceViewRenderer.setVisibility(hasSurfaceMask() ? View.INVISIBLE : View.VISIBLE);
         }
 
         // Re-attach to video track with the new renderer

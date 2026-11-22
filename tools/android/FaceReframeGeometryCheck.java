@@ -85,7 +85,54 @@ public final class FaceReframeGeometryCheck {
         return new int[]{Math.min(w, Math.round(h / 1f * aspect)), Math.min(h, Math.round(w / 1f / aspect))};
     }
 
+    private static void verifyTileCrop(int width, int height, float frameAspect, float scale, float x, float y) {
+        FaceReframeGeometry.Placement placement = FaceReframeGeometry.cover(width, height, frameAspect, scale, x, y);
+        check(placement.left == 0 && placement.top == 0
+                && placement.right == width && placement.bottom == height, "fixed tile viewport");
+        float[] window = new float[] {placement.windowX, placement.windowY,
+                placement.windowWidth, placement.windowHeight};
+        check(window[0] >= 0f && window[0] + window[2] <= 1.000001f, "horizontal cover");
+        check(window[1] >= 0f && window[1] + window[3] <= 1.000001f, "vertical cover");
+        float layoutAspect = width / (float) height;
+        near(frameAspect * window[2] / window[3], layoutAspect, "no aspect distortion");
+
+        float[] crop = {1f, 1f, 0f, 0f};
+        boolean applies = FaceReframeGeometry.cropFor(window, frameAspect, layoutAspect, crop);
+        if (scale == 1f && x == 0f && y == 0f) {
+            check(!applies, "centered minimum cover preserves the SDK matrix");
+        }
+
+        float sx = Math.min(1f, layoutAspect / frameAspect);
+        float sy = Math.min(1f, frameAspect / layoutAspect);
+        for (int mirror : new int[] {-1, 1}) {
+            // SDK centered crop with horizontal mirror, then a rotated texture.
+            float[] incoming = {0f, mirror * sx, 0f, 0f, -sy, 0f, 0f, 0f,
+                    0f, 0f, 1f, 0f, (1f + sy) / 2f, (1f - mirror * sx) / 2f, 0f, 1f};
+            float[] composed = new float[16];
+            FaceReframeGeometry.compose(incoming, crop, composed);
+            for (float point : new float[] {0f, 0.3f, 1f}) {
+                float expectedU = window[1] + window[3] * (1f - point);
+                float expectedV = 0.5f + mirror * (window[0] + window[2] * point - 0.5f);
+                near(composed[0] * point + composed[4] * point + composed[12], expectedU, "rotated U");
+                near(composed[1] * point + composed[5] * point + composed[13], expectedV, "mirrored V");
+            }
+        }
+    }
+
+    private static void near(float actual, float expected, String message) {
+        check(Math.abs(actual - expected) < 0.00002f, message + ": " + actual + " vs " + expected);
+    }
+
     public static void main(String[] args) {
+        for (int[] size : new int[][] {{56, 56}, {112, 112}, {166, 126}, {111, 168}}) {
+            for (float aspect : new float[] {9f / 16f, 1f, 4f / 3f, 16f / 9f}) {
+                verifyTileCrop(size[0], size[1], aspect, 1f, 0f, 0f);
+                verifyTileCrop(size[0], size[1], aspect, 2.8f, 0.13f, -0.08f);
+                verifyTileCrop(size[0], size[1], aspect, 2.8f, -2f, 2f);
+                verifyTileCrop(size[0], size[1], aspect, Float.NaN, Float.NaN, Float.POSITIVE_INFINITY);
+            }
+        }
+
         Random random = new Random(42);
         int[][] frames = {{1280, 720}, {720, 1280}, {640, 480}, {1920, 1080}};
         int[][] containers = {{1080, 1920}, {540, 960}, {1080, 1080}, {720, 405}, {360, 500}};

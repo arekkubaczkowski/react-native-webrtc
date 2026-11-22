@@ -88,6 +88,27 @@ final class FaceReframeGeometry {
                 (bottom - top) / (float) scaledHeight);
     }
 
+    /** A fixed tile viewport with a translated window that always covers it. */
+    static Placement cover(int width, int height, float frameAspect,
+                           float scale, float translateX, float translateY) {
+        float fitWidth = Math.min(width, height * frameAspect);
+        float fitHeight = Math.min(height, width / frameAspect);
+        float coverScale = Math.max(width / fitWidth, height / fitHeight);
+        float zoom = Float.isFinite(scale) ? Math.max(scale, coverScale) : coverScale;
+        float windowWidth = Math.min(1f, width / (fitWidth * zoom));
+        float windowHeight = Math.min(1f, height / (fitHeight * zoom));
+        float x = Float.isFinite(translateX) ? translateX : 0f;
+        float y = Float.isFinite(translateY) ? translateY : 0f;
+        return new Placement(0, 0, width, height, true,
+                clampOffset((1f - windowWidth) * 0.5f - x * windowWidth, windowWidth),
+                clampOffset((1f - windowHeight) * 0.5f - y * windowHeight, windowHeight),
+                windowWidth, windowHeight);
+    }
+
+    private static float clampOffset(float offset, float windowSize) {
+        return Math.max(0f, Math.min(1f - windowSize, offset));
+    }
+
     /** One crop change. Immutable, so the render thread reads a consistent snapshot. */
     static final class Transition {
         final float fromX;

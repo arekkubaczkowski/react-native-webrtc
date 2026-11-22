@@ -4,13 +4,21 @@ import livekit.org.webrtc.GlRectDrawer;
 import livekit.org.webrtc.RendererCommon;
 
 /**
- * Wraps {@link GlRectDrawer} and re-frames each frame by composing a crop into the texture
+ * Wraps the output drawer and re-frames each frame by composing a crop into the texture
  * matrix EglRenderer hands it. Work happens only inside draws EglRenderer already makes for
  * incoming frames: there is no timer, no copy and no allocation per frame. A transition
  * advances only when a video frame arrives; once settled the crop is computed once and reused.
  */
 final class FaceReframeGlDrawer implements RendererCommon.GlDrawer {
-    private final GlRectDrawer delegate = new GlRectDrawer();
+    private final RendererCommon.GlDrawer delegate;
+
+    FaceReframeGlDrawer() {
+        this(new GlRectDrawer());
+    }
+
+    FaceReframeGlDrawer(RendererCommon.GlDrawer delegate) {
+        this.delegate = delegate;
+    }
 
     private volatile FaceReframeGeometry.Transition transition;
     private volatile float frameAspect;
