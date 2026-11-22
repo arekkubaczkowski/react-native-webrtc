@@ -11,21 +11,18 @@ import livekit.org.webrtc.RendererCommon;
 
 /** Uses the pinned GlGenericDrawer sampling equations with a mask in output pixels. */
 final class MaskedGlDrawer implements RendererCommon.GlDrawer {
-    private static final String VERTEX =
-            "attribute vec4 in_pos;\n"
+    private static final String VERTEX = "attribute vec4 in_pos;\n"
             + "attribute vec4 in_tc;\n"
             + "uniform mat4 tex_mat;\n"
             + "varying mediump vec2 tc;\n"
             + "void main() { gl_Position = in_pos; tc = (tex_mat * in_tc).xy; }\n";
-    private static final String PRECISION =
-            "#ifdef GL_FRAGMENT_PRECISION_HIGH\n"
+    private static final String PRECISION = "#ifdef GL_FRAGMENT_PRECISION_HIGH\n"
             + "precision highp float;\n"
             + "#else\n"
             + "precision mediump float;\n"
             + "#endif\n"
             + "varying mediump vec2 tc;\n";
-    private static final String YUV_SAMPLE =
-            "uniform sampler2D y_tex, u_tex, v_tex;\n"
+    private static final String YUV_SAMPLE = "uniform sampler2D y_tex, u_tex, v_tex;\n"
             + "vec3 videoColor() {\n"
             + "  float y = texture2D(y_tex, tc).r * 1.16438;\n"
             + "  float u = texture2D(u_tex, tc).r;\n"
@@ -34,8 +31,7 @@ final class MaskedGlDrawer implements RendererCommon.GlDrawer {
             + "              y - 0.391762 * u - 0.812968 * v + 0.531668,\n"
             + "              y + 2.01723 * u - 1.08563);\n"
             + "}\n";
-    private static final String MASK =
-            "uniform vec4 viewport;\n"
+    private static final String MASK = "uniform vec4 viewport;\n"
             + "uniform float radius;\n"
             + "void main() {\n"
             + "  vec2 halfSize = viewport.zw * 0.5;\n"
@@ -58,10 +54,8 @@ final class MaskedGlDrawer implements RendererCommon.GlDrawer {
         }
     }
 
-    private final FloatBuffer vertices = GlUtil.createFloatBuffer(
-            new float[] {-1, -1, 1, -1, -1, 1, 1, 1});
-    private final FloatBuffer texCoords = GlUtil.createFloatBuffer(
-            new float[] {0, 0, 1, 0, 0, 1, 1, 1});
+    private final FloatBuffer vertices = GlUtil.createFloatBuffer(new float[] {-1, -1, 1, -1, -1, 1, 1, 1});
+    private final FloatBuffer texCoords = GlUtil.createFloatBuffer(new float[] {0, 0, 1, 0, 0, 1, 1, 1});
     private final float radiusPx;
     private GlShader shader;
     private Input shaderInput;
@@ -74,19 +68,18 @@ final class MaskedGlDrawer implements RendererCommon.GlDrawer {
     }
 
     @Override
-    public void drawOes(int textureId, float[] matrix, int frameWidth, int frameHeight,
-                        int x, int y, int width, int height) {
+    public void drawOes(
+            int textureId, float[] matrix, int frameWidth, int frameHeight, int x, int y, int width, int height) {
         drawTexture(Input.OES, textureId, matrix, x, y, width, height);
     }
 
     @Override
-    public void drawRgb(int textureId, float[] matrix, int frameWidth, int frameHeight,
-                        int x, int y, int width, int height) {
+    public void drawRgb(
+            int textureId, float[] matrix, int frameWidth, int frameHeight, int x, int y, int width, int height) {
         drawTexture(Input.RGB, textureId, matrix, x, y, width, height);
     }
 
-    private void drawTexture(Input input, int textureId, float[] matrix,
-                             int x, int y, int width, int height) {
+    private void drawTexture(Input input, int textureId, float[] matrix, int x, int y, int width, int height) {
         prepare(input, matrix, x, y, width, height);
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
         GLES20.glBindTexture(input.target, textureId);
@@ -95,8 +88,8 @@ final class MaskedGlDrawer implements RendererCommon.GlDrawer {
     }
 
     @Override
-    public void drawYuv(int[] textures, float[] matrix, int frameWidth, int frameHeight,
-                        int x, int y, int width, int height) {
+    public void drawYuv(
+            int[] textures, float[] matrix, int frameWidth, int frameHeight, int x, int y, int width, int height) {
         prepare(Input.YUV, matrix, x, y, width, height);
         for (int plane = 0; plane < 3; plane++) {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0 + plane);

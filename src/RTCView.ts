@@ -1,4 +1,4 @@
-import { requireNativeComponent, ViewProps } from "react-native";
+import { requireNativeComponent, ViewProps } from 'react-native';
 
 /**
  * Native prop validation was removed from RN in:
@@ -47,7 +47,7 @@ export interface RTCVideoViewProps extends ViewProps {
    *
    * Defaults to 'cover'.
    */
-  objectFit?: "contain" | "cover";
+  objectFit?: 'contain' | 'cover';
 
   /**
    * URL / id of the stream that should be rendered.
@@ -140,4 +140,4 @@ export interface RTCIOSPIPOptions {
    */
   stopAutomatically?: boolean;
 }
-export default requireNativeComponent<RTCVideoViewProps>("RTCVideoView");
+export default requireNativeComponent<RTCVideoViewProps>('RTCVideoView');
