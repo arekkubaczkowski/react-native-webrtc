@@ -21,7 +21,11 @@ export interface RTCVideoViewProps extends ViewProps {
      * Defaults to false (SurfaceView).
      */
     useTextureView?: boolean;
-    /** Android SurfaceView cover mask radius in dp. Set at mount, with zOrder=1. */
+    /**
+     * Android SurfaceView cover mask radius in dp. Set at mount, with zOrder=1.
+     * Over regular views, clip the parent to the same radius so the hole in the
+     * app window matches the video mask.
+     */
     surfaceMaskRadius?: number;
     /**
      * Indicates whether the video specified by {@link #streamURL} should be

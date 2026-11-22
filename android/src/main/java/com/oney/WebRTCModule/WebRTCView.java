@@ -188,7 +188,7 @@ public class WebRTCView extends ViewGroup {
     private float reframeFrameAspect;
     private final float[] reframePresentedWindow = new float[4];
     private float surfaceMaskRadiusPx;
-    private int maskedStreamRequest;
+    private int streamRequestId;
     private boolean maskedRendererDetaching;
 
     public WebRTCView(Context context) {
@@ -224,7 +224,7 @@ public class WebRTCView extends ViewGroup {
      * @param callback Callback invoked on UI thread with the VideoTrack (or null if not found)
      */
     private void getVideoTrackForStreamURL(String streamURL, java.util.function.Consumer<VideoTrack> callback) {
-        if (streamURL == null) {
+        if (streamURL == null || streamURL.isEmpty()) {
             callback.accept(null);
             return;
         }
@@ -692,19 +692,8 @@ public class WebRTCView extends ViewGroup {
      */
     void setStreamURL(String streamURL) {
         Log.d(TAG, "Set stream URL " + streamURL + " current: " + this.streamURL);
-        final boolean masked = hasSurfaceMask();
-        if (masked) {
-            // A replacement may arrive while the previous URL is still resolving.
-            final int request = ++maskedStreamRequest;
-            getVideoTrackForStreamURL(streamURL, track -> {
-                if (request == maskedStreamRequest) {
-                    this.streamURL = streamURL;
-                    setVideoTrack(track);
-                }
-            });
-            return;
-        }
-        if (Objects.equals(streamURL, this.streamURL)) {
+        final int requestId = ++streamRequestId;
+        if (!hasSurfaceMask() && Objects.equals(streamURL, this.streamURL)) {
             return;
         }
 
@@ -719,8 +708,12 @@ public class WebRTCView extends ViewGroup {
         // importantly the videoRender may eventually crash when the old
         // videoTrack is disposed.
         getVideoTrackForStreamURL(streamURL, videoTrack -> {
+            if (requestId != streamRequestId) {
+                return;
+            }
+
             Log.d(TAG, "Got video track for stream URL " + streamURL + " -> " + videoTrack);
-            if (this.videoTrack != videoTrack) {
+            if (!hasSurfaceMask() && this.videoTrack != videoTrack) {
                 setVideoTrack(null);
             }
 
