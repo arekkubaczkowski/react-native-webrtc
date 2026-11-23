@@ -1,10 +1,12 @@
 package com.oney.WebRTCModule;
 
+import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Point;
+import android.os.Build;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -160,8 +162,8 @@ public class WebRTCView extends ViewGroup {
      * These affect how the video is rendered INSIDE the SurfaceView
      */
     private float customScale = 1.0f;
-    private float customTranslateX = 0f; // as fraction of width (-1 to 1)
-    private float customTranslateY = 0f; // as fraction of height (-1 to 1)
+    private float customTranslateX = 0f; // as fraction of width
+    private float customTranslateY = 0f; // as fraction of height
     private boolean useCustomTransform = false;
 
     /**
@@ -171,6 +173,17 @@ public class WebRTCView extends ViewGroup {
      */
     private boolean useTextureView = false;
     private TextureViewRenderer textureViewRenderer;
+
+    private static final long FACE_REFRAME_DURATION_NS = 280_000_000L;
+    private boolean useFaceReframe;
+    private volatile FaceReframeGlDrawer faceReframeDrawer;
+    private boolean customTransformPending;
+    private FaceReframeGeometry.Placement reframePlacement;
+    private FaceReframeGeometry.Transition reframeTransition;
+    private int reframeContainerWidth;
+    private int reframeContainerHeight;
+    private float reframeFrameAspect;
+    private final float[] reframePresentedWindow = new float[4];
 
     public WebRTCView(Context context) {
         super(context);
@@ -298,6 +311,11 @@ public class WebRTCView extends ViewGroup {
      * @param rotation The new rotation of the rendered video frame.
      */
     private void onFrameResolutionChanged(int videoWidth, int videoHeight, int rotation) {
+        FaceReframeGlDrawer reframeDrawer = faceReframeDrawer;
+        if (reframeDrawer != null && videoWidth > 0 && videoHeight > 0) {
+            // The render thread can still be drawing a frame with the previous aspect.
+            reframeDrawer.setFrameAspect(computeFrameAspectRatio(videoWidth, videoHeight, rotation));
+        }
         boolean changed = false;
 
         synchronized (layoutSyncRoot) {
@@ -348,6 +366,7 @@ public class WebRTCView extends ViewGroup {
         int height = b - t;
 
         if (width == 0 || height == 0) {
+            resetFaceReframe();
             layoutRenderer(0, 0, 0, 0);
             return;
         }
@@ -364,6 +383,7 @@ public class WebRTCView extends ViewGroup {
         if (useCustomTransform && frameWidth > 0 && frameHeight > 0) {
             layoutWithCustomTransform(width, height, frameWidth, frameHeight, frameRotation);
         } else {
+            resetFaceReframe();
             layoutWithDefaultScaling(width, height, frameWidth, frameHeight, frameRotation, scalingType);
         }
     }
@@ -392,19 +412,70 @@ public class WebRTCView extends ViewGroup {
         // prevents the surface from drawing over sibling views (SurfaceView ignores
         // parent overflow:hidden).
         surfaceViewRenderer.setScalingType(ScalingType.SCALE_ASPECT_FIT);
-        int scaledWidth = (int)(baseSize.x * customScale);
-        int scaledHeight = (int)(baseSize.y * customScale);
-        int centerX = width / 2;
-        int centerY = height / 2;
-        int offsetX = (int)(width * customTranslateX);
-        int offsetY = (int)(height * customTranslateY);
-        int rawL = centerX - scaledWidth / 2 + offsetX;
-        int rawT = centerY - scaledHeight / 2 + offsetY;
-        layoutRenderer(
-                Math.max(0, rawL),
-                Math.max(0, rawT),
-                Math.min(width, rawL + scaledWidth),
-                Math.min(height, rawT + scaledHeight));
+        FaceReframeGeometry.Placement placement = FaceReframeGeometry.place(
+                width, height, baseSize.x, baseSize.y, customScale, customTranslateX, customTranslateY);
+        layoutRenderer(placement.left, placement.top, placement.right, placement.bottom);
+        publishFaceReframe(placement, width, height, frameWidth, frameHeight, frameRotation);
+    }
+
+    /**
+     * Hands the drawer the window the renderer bounds should show. Animates only between two
+     * windows with identical bounds, container and frame geometry on the same renderer; any
+     * other change snaps, like the surface resize that accompanies it.
+     */
+    private void publishFaceReframe(FaceReframeGeometry.Placement placement, int containerWidth, int containerHeight,
+            int frameWidth, int frameHeight, int frameRotation) {
+        FaceReframeGlDrawer drawer = faceReframeDrawer;
+        if (drawer == null) {
+            return;
+        }
+        if (!placement.hasWindow) {
+            resetFaceReframe();
+            return;
+        }
+        // Aspect, not size: a simulcast layer switch keeps the window valid and the animation going.
+        float frameAspect = computeFrameAspectRatio(frameWidth, frameHeight, frameRotation);
+        boolean sameGeometry = placement.sameBounds(reframePlacement) && containerWidth == reframeContainerWidth
+                && containerHeight == reframeContainerHeight && frameAspect == reframeFrameAspect;
+        if (sameGeometry && placement.sameWindow(reframePlacement)) {
+            return;
+        }
+        // Same float division SurfaceViewRenderer.onLayout feeds EglRenderer.setLayoutAspectRatio.
+        float boundsAspect = (placement.right - placement.left) / (float) (placement.bottom - placement.top);
+        FaceReframeGeometry.Transition next;
+        if (sameGeometry && reframeTransition != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                && ValueAnimator.areAnimatorsEnabled()) {
+            long now = System.nanoTime();
+            FaceReframeGeometry.windowAt(reframeTransition, now, reframePresentedWindow);
+            next = new FaceReframeGeometry.Transition(reframePresentedWindow[0],
+                    reframePresentedWindow[1],
+                    reframePresentedWindow[2],
+                    reframePresentedWindow[3],
+                    placement.windowX,
+                    placement.windowY,
+                    placement.windowWidth,
+                    placement.windowHeight,
+                    now,
+                    FACE_REFRAME_DURATION_NS,
+                    boundsAspect);
+        } else {
+            next = FaceReframeGeometry.Transition.snap(placement, boundsAspect);
+        }
+        drawer.setTransition(next);
+        reframeTransition = next;
+        reframePlacement = placement;
+        reframeContainerWidth = containerWidth;
+        reframeContainerHeight = containerHeight;
+        reframeFrameAspect = frameAspect;
+    }
+
+    private void resetFaceReframe() {
+        FaceReframeGlDrawer drawer = faceReframeDrawer;
+        if (drawer != null) {
+            drawer.setTransition(null);
+        }
+        reframeTransition = null;
+        reframePlacement = null;
     }
 
     private void layoutWithDefaultScaling(int width, int height,
@@ -470,6 +541,8 @@ public class WebRTCView extends ViewGroup {
      */
     private void removeRendererFromVideoTrack() {
         if (rendererAttached) {
+            resetFaceReframe();
+            faceReframeDrawer = null;
             if (videoTrack != null) {
                 final boolean isTexture = useTextureView && textureViewRenderer != null;
                 ThreadUtils.runOnExecutor(() -> {
@@ -716,9 +789,16 @@ public class WebRTCView extends ViewGroup {
                 });
             } else {
                 try {
-                    surfaceViewRenderer.init(sharedContext, rendererEvents);
+                    if (useFaceReframe) {
+                        FaceReframeGlDrawer drawer = new FaceReframeGlDrawer();
+                        faceReframeDrawer = drawer;
+                        surfaceViewRenderer.init(sharedContext, rendererEvents, EglBase.CONFIG_PLAIN, drawer);
+                    } else {
+                        surfaceViewRenderer.init(sharedContext, rendererEvents);
+                    }
                     surfaceViewRendererInstances++;
                 } catch (Exception e) {
+                    faceReframeDrawer = null;
                     Logging.e(TAG, "Failed to initialize surfaceViewRenderer on instance " + surfaceViewRendererInstances, e);
                     return;
                 }
@@ -753,32 +833,74 @@ public class WebRTCView extends ViewGroup {
     public void setCustomScale(float scale) {
         if (this.customScale != scale) {
             this.customScale = scale;
-            applyCustomTransformOrRequestLayout();
+            onCustomTransformChanged();
         }
     }
 
     /**
      * Sets custom X translation for video rendering.
      *
-     * @param translateX Translation as fraction of container width (-1 to 1).
+     * @param translateX Translation as fraction of container width.
      */
     public void setCustomTranslateX(float translateX) {
         if (this.customTranslateX != translateX) {
             this.customTranslateX = translateX;
-            applyCustomTransformOrRequestLayout();
+            onCustomTransformChanged();
         }
     }
 
     /**
      * Sets custom Y translation for video rendering.
      *
-     * @param translateY Translation as fraction of container height (-1 to 1).
+     * @param translateY Translation as fraction of container height.
      */
     public void setCustomTranslateY(float translateY) {
         if (this.customTranslateY != translateY) {
             this.customTranslateY = translateY;
+            onCustomTransformChanged();
+        }
+    }
+
+    private boolean isFaceReframeActive() {
+        return useFaceReframe && !useTextureView;
+    }
+
+    /**
+     * When face reframing is active, X, Y and scale are only recorded here and applied together by
+     * {@link #commitPendingCustomTransform()} once per prop transaction.
+     */
+    private void onCustomTransformChanged() {
+        if (isFaceReframeActive()) {
+            customTransformPending = true;
+        } else {
             applyCustomTransformOrRequestLayout();
         }
+    }
+
+    /** Called by the view manager after every prop transaction. */
+    void commitPendingCustomTransform() {
+        if (!customTransformPending) {
+            return;
+        }
+        customTransformPending = false;
+        if (!ViewCompat.isInLayout(this)) {
+            onLayout(/* changed */ false, getLeft(), getTop(), getRight(), getBottom());
+        } else {
+            post(requestSurfaceViewRendererLayoutRunnable);
+        }
+    }
+
+    public void setUseFaceReframe(boolean enabled) {
+        if (useFaceReframe == enabled) {
+            return;
+        }
+        useFaceReframe = enabled;
+        customTransformPending = false;
+        if (rendererAttached && !useTextureView) {
+            removeRendererFromVideoTrack();
+            tryAddRendererToVideoTrack();
+        }
+        requestSurfaceViewRendererLayout();
     }
 
     /**

@@ -136,6 +136,17 @@ public class RTCVideoViewManager extends SimpleViewManager<WebRTCView> {
         view.setUseTextureView(useTextureView);
     }
 
+    @ReactProp(name = "useFaceReframe")
+    public void setUseFaceReframe(WebRTCView view, boolean enabled) {
+        view.setUseFaceReframe(enabled);
+    }
+
+    @Override
+    protected void onAfterUpdateTransaction(WebRTCView view) {
+        super.onAfterUpdateTransaction(view);
+        view.commitPendingCustomTransform();
+    }
+
     @Override
     public Map<String, Object> getExportedCustomDirectEventTypeConstants() {
         Map<String, Object> eventTypeConstants = new HashMap<>();

@@ -1,4 +1,4 @@
-import { ViewProps } from "react-native";
+import { ViewProps } from 'react-native';
 /**
  * Native prop validation was removed from RN in:
  * https://github.com/facebook/react-native/commit/8dc3ba0444c94d9bbb66295b5af885bff9b9cd34
@@ -10,6 +10,8 @@ export interface RTCVideoViewProps extends ViewProps {
     customTranslateX?: number;
     customTranslateY?: number;
     useCustomTransform?: boolean;
+    /** Android only. Animates crop changes in the SurfaceView GL renderer. */
+    useFaceReframe?: boolean;
     /**
      * Android only. When true, uses TextureViewRenderer instead of
      * SurfaceViewRenderer. TextureView renders in the normal View hierarchy
@@ -37,7 +39,7 @@ export interface RTCVideoViewProps extends ViewProps {
      *
      * Defaults to 'cover'.
      */
-    objectFit?: "contain" | "cover";
+    objectFit?: 'contain' | 'cover';
     /**
      * URL / id of the stream that should be rendered.
      *
