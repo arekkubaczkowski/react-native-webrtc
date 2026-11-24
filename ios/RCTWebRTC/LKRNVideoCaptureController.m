@@ -273,9 +273,10 @@
     int currentDiff = INT_MAX;
 
     for (AVCaptureDeviceFormat *format in formats) {
-        // Only use multi cam formats when on multi cam supported devices.
+        // MultiCam capture sessions require compatible formats.
         if (@available(iOS 13.0, macOS 14.0, tvOS 17.0, *)) {
-            if (AVCaptureMultiCamSession.multiCamSupported && !format.multiCamSupported) {
+            if ([self.capturer.captureSession isKindOfClass:[AVCaptureMultiCamSession class]] &&
+                !format.multiCamSupported) {
                 continue;
             }
         }
