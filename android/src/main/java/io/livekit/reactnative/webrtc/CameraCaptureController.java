@@ -149,6 +149,15 @@ public class CameraCaptureController extends AbstractVideoCaptureController {
             }
         }
 
+        // Track creation may have picked a fallback when the requested facing was unavailable.
+        if (cameraName == null && currentDeviceId != null) {
+            int currentCameraIndex = Integer.parseInt(currentDeviceId);
+            if (currentCameraIndex >= 0 && currentCameraIndex < deviceNames.length) {
+                cameraIndex = currentCameraIndex;
+                cameraName = deviceNames[cameraIndex];
+            }
+        }
+
         if (cameraName == null) {
             if (onFinishedCallback != null) {
                 onFinishedCallback.accept(new Exception("OverconstrainedError: could not find camera with deviceId: "
