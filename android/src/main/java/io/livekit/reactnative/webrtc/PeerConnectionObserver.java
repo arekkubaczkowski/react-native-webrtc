@@ -39,6 +39,7 @@ class PeerConnectionObserver implements PeerConnection.Observer {
     private int transceiverNextId = 0;
 
     private PeerConnection peerConnection;
+    private volatile boolean disposed;
     final Map<String, String> remoteStreamIds; // Stream ID -> React tag
     final Map<String, MediaStream> remoteStreams; // React tag -> MediaStream
     final Map<String, MediaStreamTrack> remoteTracks;
@@ -72,6 +73,8 @@ class PeerConnectionObserver implements PeerConnection.Observer {
     void dispose() {
         Log.d(TAG, "PeerConnection.dispose() for " + id);
 
+        disposed = true;
+
         // Remove video track adapters
         for (MediaStreamTrack track : this.remoteTracks.values()) {
             if (track instanceof VideoTrack) {
@@ -94,6 +97,23 @@ class PeerConnectionObserver implements PeerConnection.Observer {
         remoteStreams.clear();
         remoteTracks.clear();
         dataChannels.clear();
+    }
+
+    /**
+     * Observer callbacks arrive on the native signalling thread and are queued on the same
+     * single-threaded executor dispose() runs on, so one enqueued behind dispose() would run
+     * against objects peerConnection.dispose() already freed. livekit.org.webrtc.PeerConnection keeps its
+     * native handle in a final field that is never zeroed, so that access cannot fail safely.
+     */
+    private void runIfAlive(Runnable runnable) {
+        ThreadUtils.runOnExecutor(() -> {
+            if (disposed) {
+                Log.d(TAG, "Skipping observer callback for disposed PeerConnection " + id);
+                return;
+            }
+
+            runnable.run();
+        });
     }
 
     public synchronized int getNextTransceiverId() {
@@ -292,7 +312,7 @@ class PeerConnectionObserver implements PeerConnection.Observer {
     public void onIceCandidate(final IceCandidate candidate) {
         Log.d(TAG, "onIceCandidate");
 
-        ThreadUtils.runOnExecutor(() -> {
+        runIfAlive(() -> {
             WritableMap params = Arguments.createMap();
             params.putInt("pcId", id);
 
@@ -322,7 +342,7 @@ class PeerConnectionObserver implements PeerConnection.Observer {
 
     @Override
     public void onIceConnectionChange(PeerConnection.IceConnectionState iceConnectionState) {
-        ThreadUtils.runOnExecutor(() -> {
+        runIfAlive(() -> {
             WritableMap params = Arguments.createMap();
             params.putInt("pcId", id);
             params.putString("iceConnectionState", iceConnectionStateString(iceConnectionState));
@@ -332,7 +352,7 @@ class PeerConnectionObserver implements PeerConnection.Observer {
 
     @Override
     public void onConnectionChange(PeerConnection.PeerConnectionState peerConnectionState) {
-        ThreadUtils.runOnExecutor(() -> {
+        runIfAlive(() -> {
             WritableMap params = Arguments.createMap();
             params.putInt("pcId", id);
             params.putString("connectionState", peerConnectionStateString(peerConnectionState));
@@ -348,7 +368,7 @@ class PeerConnectionObserver implements PeerConnection.Observer {
     public void onIceGatheringChange(PeerConnection.IceGatheringState iceGatheringState) {
         Log.d(TAG, "onIceGatheringChange" + iceGatheringState.name());
 
-        ThreadUtils.runOnExecutor(() -> {
+        runIfAlive(() -> {
             WritableMap params = Arguments.createMap();
             params.putInt("pcId", id);
             params.putString("iceGatheringState", iceGatheringStateString(iceGatheringState));
@@ -370,7 +390,7 @@ class PeerConnectionObserver implements PeerConnection.Observer {
 
     @Override
     public void onDataChannel(DataChannel dataChannel) {
-        ThreadUtils.runOnExecutor(() -> {
+        runIfAlive(() -> {
             final String reactTag = UUID.randomUUID().toString();
             DataChannelWrapper dcw = new DataChannelWrapper(webRTCModule, id, reactTag, dataChannel);
             dataChannels.put(reactTag, dcw);
@@ -401,7 +421,7 @@ class PeerConnectionObserver implements PeerConnection.Observer {
 
     @Override
     public void onRenegotiationNeeded() {
-        ThreadUtils.runOnExecutor(() -> {
+        runIfAlive(() -> {
             WritableMap params = Arguments.createMap();
             params.putInt("pcId", id);
             webRTCModule.sendEvent("peerConnectionOnRenegotiationNeeded", params);
@@ -410,7 +430,7 @@ class PeerConnectionObserver implements PeerConnection.Observer {
 
     @Override
     public void onSignalingChange(PeerConnection.SignalingState signalingState) {
-        ThreadUtils.runOnExecutor(() -> {
+        runIfAlive(() -> {
             WritableMap params = Arguments.createMap();
             params.putInt("pcId", id);
             params.putString("signalingState", signalingStateString(signalingState));
@@ -426,7 +446,16 @@ class PeerConnectionObserver implements PeerConnection.Observer {
     public void onAddTrack(final RtpReceiver receiver, final MediaStream[] mediaStreams) {
         Log.d(TAG, "onAddTrack");
 
-        ThreadUtils.runOnExecutor(() -> {
+        // libwebrtc owns these MediaStream wrappers and disposes them on the signalling thread the
+        // moment renegotiation drops the stream, without passing through this executor. Reading the
+        // ids here, while the callback still guarantees the wrappers are alive, keeps the queued
+        // body from dereferencing one that died in between.
+        final String[] streamIds = new String[mediaStreams.length];
+        for (int i = 0; i < mediaStreams.length; i++) {
+            streamIds[i] = mediaStreams[i].getId();
+        }
+
+        runIfAlive(() -> {
             RtpTransceiver transceiver = null;
             for (RtpTransceiver t : this.peerConnection.getTransceivers()) {
                 if (Objects.equals(t.getReceiver().id(), receiver.id())) {
@@ -458,19 +487,31 @@ class PeerConnectionObserver implements PeerConnection.Observer {
             WritableMap params = Arguments.createMap();
             WritableArray streams = Arguments.createArray();
 
-            for (MediaStream stream : mediaStreams) {
+            for (int i = 0; i < mediaStreams.length; i++) {
+                final MediaStream stream = mediaStreams[i];
+                final String streamId = streamIds[i];
+
                 // Getting the streamReactTag
-                String streamReactTag = remoteStreamIds.get(stream.getId());
+                String streamReactTag = remoteStreamIds.get(streamId);
 
                 if (streamReactTag == null) {
                     streamReactTag = UUID.randomUUID().toString();
-                    remoteStreamIds.put(stream.getId(), streamReactTag);
+                    remoteStreamIds.put(streamId, streamReactTag);
                 }
 
-                // Make sure the stored stream is updated in case we get a new reference.
-                remoteStreams.put(streamReactTag, stream);
+                try {
+                    // Make sure the stored stream is updated in case we get a new reference.
+                    remoteStreams.put(streamReactTag, stream);
 
-                streams.pushMap(SerializeUtils.serializeStream(id, streamReactTag, stream));
+                    streams.pushMap(SerializeUtils.serializeStream(id, streamReactTag, stream));
+                } catch (IllegalStateException e) {
+                    // serializeStream walks the stream's track lists, which dispose() clears, so the
+                    // whole block has to be covered rather than the id read alone. A stream the SFU
+                    // has already withdrawn carries nothing actionable — the next negotiation is
+                    // authoritative — so skip it instead of taking the process down.
+                    Log.w(TAG, "Skipping a disposed remote stream " + streamId + " on pc " + id);
+                    remoteStreams.remove(streamReactTag);
+                }
             }
 
             params.putArray("streams", streams);
@@ -497,7 +538,7 @@ class PeerConnectionObserver implements PeerConnection.Observer {
      */
     @Override
     public void onRemoveTrack(RtpReceiver receiver) {
-        ThreadUtils.runOnExecutor(() -> {
+        runIfAlive(() -> {
             WritableMap params = Arguments.createMap();
             params.putInt("pcId", this.id);
             params.putString("receiverId", receiver.id());
@@ -506,9 +547,27 @@ class PeerConnectionObserver implements PeerConnection.Observer {
         });
     };
 
-    // This is only added to compile. Plan B is not supported anymore.
+    /**
+     * Plan B is not supported anymore, so nothing here is forwarded to JS. It still has to run:
+     * libwebrtc disposes this wrapper as soon as the callback returns, and without dropping it
+     * remoteStreams keeps a disposed object forever — a leak, and a fatal throw for whichever
+     * reader touches it next. The id is read here, while the wrapper is still alive; the map is
+     * mutated on the executor, which is the only thread that owns it.
+     */
     @Override
-    public void onRemoveStream(MediaStream stream) {}
+    public void onRemoveStream(MediaStream stream) {
+        final String streamId = stream.getId();
+
+        runIfAlive(() -> {
+            // remoteStreamIds is deliberately left intact: it holds only strings, and keeping the
+            // id-to-tag mapping is what lets a re-added stream keep its React tag.
+            final String streamReactTag = remoteStreamIds.get(streamId);
+
+            if (streamReactTag != null) {
+                remoteStreams.remove(streamReactTag);
+            }
+        });
+    }
 
     // This is only added to compile. Plan B is not supported anymore.
     @Override

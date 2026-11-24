@@ -32,7 +32,9 @@ public class H264AndSoftwareVideoDecoderFactory implements VideoDecoderFactory {
     @Override
     public VideoDecoder createDecoder(VideoCodecInfo codecInfo) {
         if (codecInfo.name.equalsIgnoreCase("H264")) {
-            return this.hardwareVideoDecoderFactory.createDecoder(codecInfo);
+            VideoDecoder decoder = this.hardwareVideoDecoderFactory.createDecoder(codecInfo);
+
+            return decoder == null ? null : new CrashSafeVideoDecoder(decoder);
         }
 
         return this.softwareVideoDecoderFactory.createDecoder(codecInfo);

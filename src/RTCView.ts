@@ -7,6 +7,27 @@ import { requireNativeComponent, ViewProps } from 'react-native';
  * So we list them here for documentation purposes.
  */
 export interface RTCVideoViewProps extends ViewProps {
+  customScale?: number;
+  customTranslateX?: number; // as fraction of width
+  customTranslateY?: number; // as fraction of height
+  useCustomTransform?: boolean;
+  /** Android only. Animates crop changes in the SurfaceView GL renderer. */
+  useFaceReframe?: boolean;
+  /**
+   * Android only. When true, uses TextureViewRenderer instead of
+   * SurfaceViewRenderer. TextureView renders in the normal View hierarchy
+   * and supports borderRadius, overflow:hidden, and other clipping.
+   * Slightly higher GPU overhead but negligible for small views.
+   *
+   * Defaults to false (SurfaceView).
+   */
+  useTextureView?: boolean;
+  /**
+   * Android SurfaceView cover mask radius in dp. Set at mount, with zOrder=1.
+   * Over regular views, clip the parent to the same radius so the hole in the
+   * app window matches the video mask.
+   */
+  surfaceMaskRadius?: number;
   /**
    * Indicates whether the video specified by {@link #streamURL} should be
    * mirrored during rendering. Commonly, applications choose to mirror the
@@ -61,7 +82,6 @@ export interface RTCVideoViewProps extends ViewProps {
    */
   zOrder?: number;
 
-
   /**
    * Picture in picture options for this view. Disabled if not supplied.
    *
@@ -80,11 +100,12 @@ export interface RTCVideoViewProps extends ViewProps {
    * @param {number} event.nativeEvent.width - The width of the video.
    * @param {number} event.nativeEvent.height - The height of the video.
    */
-  onDimensionsChange?: (event: { nativeEvent: { width: number; height: number } }) => void;
+  onDimensionsChange?: (event: {
+    nativeEvent: { width: number; height: number };
+  }) => void;
 }
 
 export interface RTCIOSPIPOptions {
-
   /**
    * Whether PIP can be launched from this view.
    *
@@ -98,7 +119,7 @@ export interface RTCIOSPIPOptions {
   preferredSize?: {
     width: number;
     height: number;
-  },
+  };
 
   /**
    * Indicates whether Picture in Picture starts automatically
