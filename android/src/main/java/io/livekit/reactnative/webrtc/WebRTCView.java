@@ -441,11 +441,9 @@ public class WebRTCView extends ViewGroup {
         }
     }
 
-    private void layoutWithCustomTransform(int width, int height,
-                                            int frameWidth, int frameHeight, int frameRotation) {
+    private void layoutWithCustomTransform(int width, int height, int frameWidth, int frameHeight, int frameRotation) {
         float frameAspectRatio = computeFrameAspectRatio(frameWidth, frameHeight, frameRotation);
-        Point baseSize = RendererCommon.getDisplaySize(
-                ScalingType.SCALE_ASPECT_FIT, frameAspectRatio, width, height);
+        Point baseSize = RendererCommon.getDisplaySize(ScalingType.SCALE_ASPECT_FIT, frameAspectRatio, width, height);
 
         if (useTextureView && textureViewRenderer != null) {
             // TextureView: lay the renderer out at the FULL container and apply
@@ -531,9 +529,8 @@ public class WebRTCView extends ViewGroup {
         reframePlacement = null;
     }
 
-    private void layoutWithDefaultScaling(int width, int height,
-                                           int frameWidth, int frameHeight, int frameRotation,
-                                           ScalingType scalingType) {
+    private void layoutWithDefaultScaling(
+            int width, int height, int frameWidth, int frameHeight, int frameRotation, ScalingType scalingType) {
         if (scalingType == ScalingType.SCALE_ASPECT_FILL) {
             if (useTextureView && frameWidth > 0 && frameHeight > 0) {
                 // EglRenderer has no built-in scaling — compute cover bounds; the
@@ -575,17 +572,14 @@ public class WebRTCView extends ViewGroup {
         }
     }
 
-    private void layoutRendererCentered(int containerWidth, int containerHeight,
-                                         int contentWidth, int contentHeight) {
+    private void layoutRendererCentered(int containerWidth, int containerHeight, int contentWidth, int contentHeight) {
         int left = (containerWidth - contentWidth) / 2;
         int top = (containerHeight - contentHeight) / 2;
         layoutRenderer(left, top, left + contentWidth, top + contentHeight);
     }
 
     private static float computeFrameAspectRatio(int frameWidth, int frameHeight, int frameRotation) {
-        return (frameRotation % 180 == 0)
-                ? frameWidth / (float) frameHeight
-                : frameHeight / (float) frameWidth;
+        return (frameRotation % 180 == 0) ? frameWidth / (float) frameHeight : frameHeight / (float) frameWidth;
     }
 
     /**
@@ -855,7 +849,9 @@ public class WebRTCView extends ViewGroup {
                     textureViewRenderer.init(sharedContext, rendererEvents);
                     surfaceViewRendererInstances++;
                 } catch (Exception e) {
-                    Logging.e(TAG, "Failed to initialize textureViewRenderer on instance " + surfaceViewRendererInstances, e);
+                    Logging.e(TAG,
+                            "Failed to initialize textureViewRenderer on instance " + surfaceViewRendererInstances,
+                            e);
                     return;
                 }
 
@@ -878,13 +874,16 @@ public class WebRTCView extends ViewGroup {
                     surfaceViewRendererInstances++;
                 } catch (Exception e) {
                     faceReframeDrawer = null;
-                    Logging.e(TAG, "Failed to initialize surfaceViewRenderer on instance " + surfaceViewRendererInstances, e);
+                    Logging.e(TAG,
+                            "Failed to initialize surfaceViewRenderer on instance " + surfaceViewRendererInstances,
+                            e);
                     return;
                 }
             }
 
             // Frames from an old track must not reach the renderer after it is reused.
-            final TrackSink sink = new TrackSink(videoTrack, useTextureView ? textureViewRenderer : surfaceViewRenderer);
+            final TrackSink sink =
+                    new TrackSink(videoTrack, useTextureView ? textureViewRenderer : surfaceViewRenderer);
             trackSink = sink;
             ThreadUtils.runOnExecutor(() -> {
                 try {
@@ -1019,18 +1018,15 @@ public class WebRTCView extends ViewGroup {
      * with customScale > 1 the rendered frame grows past baseSize and covers the
      * previously-letterbox area, with overflow clipped by TextureView's bounds.
      */
-    private void applyCustomTextureTransform(int containerWidth, int containerHeight,
-                                             int baseWidth, int baseHeight) {
+    private void applyCustomTextureTransform(int containerWidth, int containerHeight, int baseWidth, int baseHeight) {
         if (textureViewRenderer == null) {
             return;
         }
         float fitScaleX = baseWidth / (float) containerWidth;
         float fitScaleY = baseHeight / (float) containerHeight;
         Matrix matrix = new Matrix();
-        matrix.setScale(fitScaleX * customScale, fitScaleY * customScale,
-                        containerWidth / 2f, containerHeight / 2f);
-        matrix.postTranslate(containerWidth * customTranslateX,
-                             containerHeight * customTranslateY);
+        matrix.setScale(fitScaleX * customScale, fitScaleY * customScale, containerWidth / 2f, containerHeight / 2f);
+        matrix.postTranslate(containerWidth * customTranslateX, containerHeight * customTranslateY);
         textureViewRenderer.setTransform(matrix);
     }
 
@@ -1049,13 +1045,8 @@ public class WebRTCView extends ViewGroup {
         }
         int containerW = getWidth();
         int containerH = getHeight();
-        if (useCustomTransform
-                && useTextureView
-                && textureViewRenderer != null
-                && containerW > 0
-                && containerH > 0
-                && frameW > 0
-                && frameH > 0) {
+        if (useCustomTransform && useTextureView && textureViewRenderer != null && containerW > 0 && containerH > 0
+                && frameW > 0 && frameH > 0) {
             float frameAspectRatio = computeFrameAspectRatio(frameW, frameH, frameRotation);
             Point baseSize = RendererCommon.getDisplaySize(
                     ScalingType.SCALE_ASPECT_FIT, frameAspectRatio, containerW, containerH);

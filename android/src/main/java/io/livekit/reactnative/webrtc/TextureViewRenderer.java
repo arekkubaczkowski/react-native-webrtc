@@ -20,9 +20,7 @@ import livekit.org.webrtc.VideoSink;
  *
  * Uses EglRenderer internally for OpenGL rendering to the TextureView's SurfaceTexture.
  */
-public class TextureViewRenderer extends TextureView
-        implements TextureView.SurfaceTextureListener, VideoSink {
-
+public class TextureViewRenderer extends TextureView implements TextureView.SurfaceTextureListener, VideoSink {
     private static final String TAG = "TextureViewRenderer";
 
     private final EglRenderer eglRenderer;
@@ -50,8 +48,8 @@ public class TextureViewRenderer extends TextureView
         init(sharedContext, rendererEvents, EglBase.CONFIG_PLAIN, new livekit.org.webrtc.GlRectDrawer());
     }
 
-    public void init(EglBase.Context sharedContext, RendererEvents rendererEvents,
-                     int[] configAttributes, RendererCommon.GlDrawer drawer) {
+    public void init(EglBase.Context sharedContext, RendererEvents rendererEvents, int[] configAttributes,
+            RendererCommon.GlDrawer drawer) {
         this.rendererEvents = rendererEvents;
         eglRenderer.init(sharedContext, configAttributes, drawer);
         isInitialized = true;
@@ -119,12 +117,8 @@ public class TextureViewRenderer extends TextureView
         }
 
         int rotation = videoFrame.getRotation();
-        int width = (rotation % 180 == 0)
-                ? videoFrame.getRotatedWidth()
-                : videoFrame.getRotatedHeight();
-        int height = (rotation % 180 == 0)
-                ? videoFrame.getRotatedHeight()
-                : videoFrame.getRotatedWidth();
+        int width = (rotation % 180 == 0) ? videoFrame.getRotatedWidth() : videoFrame.getRotatedHeight();
+        int height = (rotation % 180 == 0) ? videoFrame.getRotatedHeight() : videoFrame.getRotatedWidth();
 
         if (width != rotatedFrameWidth || height != rotatedFrameHeight || rotation != frameRotation) {
             rotatedFrameWidth = width;
@@ -132,9 +126,7 @@ public class TextureViewRenderer extends TextureView
             frameRotation = rotation;
             if (events != null) {
                 events.onFrameResolutionChanged(
-                        videoFrame.getBuffer().getWidth(),
-                        videoFrame.getBuffer().getHeight(),
-                        rotation);
+                        videoFrame.getBuffer().getWidth(), videoFrame.getBuffer().getHeight(), rotation);
             }
         }
     }
@@ -175,6 +167,5 @@ public class TextureViewRenderer extends TextureView
     }
 
     @Override
-    public void onSurfaceTextureUpdated(SurfaceTexture surfaceTexture) {
-    }
+    public void onSurfaceTextureUpdated(SurfaceTexture surfaceTexture) {}
 }
