@@ -229,6 +229,14 @@ class GetUserMediaImpl {
                 return;
             }
 
+            boolean capture15 = RawCameraProbe.enabled("TapinRawCapture15");
+            if (capture15 || RawCameraProbe.enabled("TapinRawCapture24")) {
+                WritableMap capture = Arguments.createMap();
+                capture.merge(videoConstraintsMap);
+                capture.putInt("frameRate", capture15 ? 15 : 24);
+                videoConstraintsMap = capture;
+            }
+
             CameraCaptureController cameraCaptureController =
                     new CameraCaptureController(currentActivity, getCameraEnumerator(), videoConstraintsMap);
 
@@ -498,6 +506,12 @@ class GetUserMediaImpl {
 
         VideoTrack track = pcFactory.createVideoTrack(id, videoSource);
 
+        if (videoCaptureController instanceof CameraCaptureController) {
+            videoSource.setVideoProcessor(RawCameraProbe.pipeline(null));
+            if (RawCameraProbe.enabled(RawCameraProbe.TAG)) {
+                track.addSink(RawCameraProbe.postSource());
+            }
+        }
         track.setEnabled(true);
         tracks.put(id, new TrackPrivate(track, videoSource, videoCaptureController, surfaceTextureHelper));
 
@@ -536,10 +550,10 @@ class GetUserMediaImpl {
                                 .collect(Collectors.toList());
 
                 VideoEffectProcessor videoEffectProcessor = new VideoEffectProcessor(processors, surfaceTextureHelper);
-                videoSource.setVideoProcessor(videoEffectProcessor);
+                videoSource.setVideoProcessor(RawCameraProbe.pipeline(videoEffectProcessor));
 
             } else {
-                videoSource.setVideoProcessor(null);
+                videoSource.setVideoProcessor(RawCameraProbe.pipeline(null));
             }
         }
     }

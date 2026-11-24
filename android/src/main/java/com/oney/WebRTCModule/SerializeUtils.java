@@ -313,6 +313,10 @@ public class SerializeUtils {
     }
 
     public static RtpTransceiver.RtpTransceiverInit parseTransceiverOptions(ReadableMap map) {
+        return parseTransceiverOptions(map, 0);
+    }
+
+    static RtpTransceiver.RtpTransceiverInit parseTransceiverOptions(ReadableMap map, int publicationCeiling) {
         if (map == null) {
             return null;
         }
@@ -340,7 +344,12 @@ public class SerializeUtils {
             if (encodingsArray != null) {
                 for (int i = 0; i < encodingsArray.size(); i++) {
                     ReadableMap encoding = encodingsArray.getMap(i);
-                    sendEncodings.add(SerializeUtils.parseEncoding(encoding));
+                    RtpParameters.Encoding parsed = SerializeUtils.parseEncoding(encoding);
+                    if (publicationCeiling > 0
+                            && (parsed.maxFramerate == null || parsed.maxFramerate > publicationCeiling)) {
+                        parsed.maxFramerate = publicationCeiling;
+                    }
+                    sendEncodings.add(parsed);
                 }
             }
         }

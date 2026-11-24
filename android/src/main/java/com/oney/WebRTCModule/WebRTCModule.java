@@ -90,7 +90,8 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
         VideoEncoderFactory encoderFactory = options.videoEncoderFactory;
         VideoDecoderFactory decoderFactory = options.videoDecoderFactory;
         Loggable injectableLogger = options.injectableLogger;
-        Logging.Severity loggingSeverity = options.loggingSeverity;
+        Logging.Severity loggingSeverity = RawCameraProbe.enabled("TapinRawCodec")
+                ? Logging.Severity.LS_INFO : options.loggingSeverity;
         String fieldTrials = options.fieldTrials;
 
         PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(reactContext)
@@ -529,6 +530,7 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
                         }
 
                         RtpTransceiver transceiver = null;
+                        boolean isVideoSender = false;
                         if (options.hasKey("type")) {
                             String kind = options.getString("type");
                             transceiver = pco.addTransceiver(SerializeUtils.parseMediaType(kind),
@@ -536,8 +538,10 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
                         } else if (options.hasKey("trackId")) {
                             String trackId = options.getString("trackId");
                             MediaStreamTrack track = getLocalTrack(trackId);
-                            transceiver = pco.addTransceiver(
-                                    track, SerializeUtils.parseTransceiverOptions(options.getMap("init")));
+                            isVideoSender = track instanceof VideoTrack;
+                            int publicationCeiling = isVideoSender ? RawCameraProbe.publicationCeiling() : 0;
+                            transceiver = pco.addTransceiver(track,
+                                    SerializeUtils.parseTransceiverOptions(options.getMap("init"), publicationCeiling));
 
                         } else {
                             // This should technically never happen as the JS side checks for that.
@@ -548,6 +552,9 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
                         if (transceiver == null) {
                             Log.d(TAG, "peerConnectionAddTransceiver() Error adding transceiver");
                             return null;
+                        }
+                        if (isVideoSender && RawCameraProbe.enabled("TapinRawStats")) {
+                            RawCameraProbe.sampleSender(this, id, transceiver.getSender().id());
                         }
                         WritableMap params = Arguments.createMap();
                         // We need to get a unique order at which the transceiver was created
