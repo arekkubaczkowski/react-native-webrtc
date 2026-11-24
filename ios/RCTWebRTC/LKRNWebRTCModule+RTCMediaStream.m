@@ -16,6 +16,21 @@
 #import "LKRNTrackCapturerEventsEmitter.h"
 #import "LKRNVideoCaptureController.h"
 
+#if TARGET_IPHONE_SIMULATOR && !TARGET_OS_TV
+@interface LKRNSimulatorCameraVideoCapturer : LKRTCCameraVideoCapturer
+@end
+
+@implementation LKRNSimulatorCameraVideoCapturer
+
+- (void)updateVideoDataOutputPixelFormat:(AVCaptureDeviceFormat *)format {
+    // M150 rewrites output settings after attaching the input. With SimCam 1.16 that
+    // crashes AVFoundation's graph rebuild. Keep the supported pixel format set at initialization.
+    (void)format;
+}
+
+@end
+#endif
+
 @implementation LKRNWebRTCModule (RTCMediaStream)
 
 - (LKRNVideoEffectProcessor *)videoEffectProcessor {
@@ -157,10 +172,9 @@
 
     if (hasRuntimeVideoDevice) {
 #if TARGET_IPHONE_SIMULATOR
-        // MultiCam reads hardware costs from the runtime camera's virtual input.
         LKRTCCameraVideoCapturer *videoCapturer =
-            [[LKRTCCameraVideoCapturer alloc] initWithDelegate:videoSource
-                                                captureSession:[[AVCaptureSession alloc] init]];
+            [[LKRNSimulatorCameraVideoCapturer alloc] initWithDelegate:videoSource
+                                                        captureSession:[[AVCaptureSession alloc] init]];
 #else
         LKRTCCameraVideoCapturer *videoCapturer = [[LKRTCCameraVideoCapturer alloc] initWithDelegate:videoSource];
 #endif
