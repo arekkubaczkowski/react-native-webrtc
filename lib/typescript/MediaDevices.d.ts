@@ -1,4 +1,5 @@
-import { Constraints } from './getUserMedia';
+import { Constraints as DisplayMediaConstraints } from './getDisplayMedia';
+import { Constraints as UserMediaConstraints } from './getUserMedia';
 import { Event, EventTarget } from './vendor/event-target-shim';
 declare type MediaDevicesEventMap = {
     devicechange: Event<'devicechange'>;
@@ -15,9 +16,10 @@ declare class MediaDevices extends EventTarget<MediaDevicesEventMap> {
      * W3C "Screen Capture" compatible {@code getDisplayMedia} implementation.
      * See: https://w3c.github.io/mediacapture-screen-share/
      *
+     * @param {*} constraints
      * @returns {Promise}
      */
-    getDisplayMedia(): Promise<import("./MediaStream").default>;
+    getDisplayMedia(constraints: DisplayMediaConstraints): Promise<import("./MediaStream").default>;
     /**
      * W3C "Media Capture and Streams" compatible {@code getUserMedia}
      * implementation.
@@ -26,7 +28,7 @@ declare class MediaDevices extends EventTarget<MediaDevicesEventMap> {
      * @param {*} constraints
      * @returns {Promise}
      */
-    getUserMedia(constraints: Constraints): Promise<import("./MediaStream").default>;
+    getUserMedia(constraints: UserMediaConstraints): Promise<import("./MediaStream").default>;
 }
 declare const _default: MediaDevices;
 export default _default;

@@ -140,4 +140,4 @@ export interface RTCIOSPIPOptions {
    */
   stopAutomatically?: boolean;
 }
-export default requireNativeComponent<RTCVideoViewProps>('RTCVideoView');
+export default requireNativeComponent<RTCVideoViewProps>('LKRNRTCVideoView');

@@ -7,7 +7,7 @@ def safeExtGet(prop, fallback) {
 android {
     def agpVersion = com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION
     if (agpVersion.tokenize('.')[0].toInteger() >= 7) {
-      namespace "com.oney.WebRTCModule"
+      namespace "io.livekit.reactnative.webrtc"
     }
 
     compileSdkVersion safeExtGet('compileSdkVersion', 24)
@@ -31,6 +31,6 @@ android {
 
 dependencies {
     implementation "com.facebook.react:react-android:+"
-    api 'io.github.webrtc-sdk:android-prefixed:144.7559.15'
+    api 'io.github.webrtc-sdk:android-prefixed:150.7871.04'
     implementation "androidx.core:core:1.7.0"
 }

@@ -1,5 +1,6 @@
 import MediaStream from './MediaStream';
 import MediaStreamTrack from './MediaStreamTrack';
+import RTCCertificate from './RTCCertificate';
 import RTCDataChannel from './RTCDataChannel';
 import RTCDataChannelEvent from './RTCDataChannelEvent';
 import RTCIceCandidateEvent from './RTCIceCandidateEvent';
@@ -30,6 +31,8 @@ declare type RTCIceServer = {
 };
 declare type RTCConfiguration = {
     bundlePolicy?: 'balanced' | 'max-compat' | 'max-bundle';
+    certificates?: RTCCertificate[];
+    enableSctpSnap?: boolean;
     iceCandidatePoolSize?: number;
     iceServers?: RTCIceServer[];
     iceTransportPolicy?: 'all' | 'relay';
@@ -61,6 +64,13 @@ export default class RTCPeerConnection extends EventTarget<RTCPeerConnectionEven
     }[];
     _remoteStreams: Map<string, MediaStream>;
     _pendingTrackEvents: any[];
+    static generateCertificate(keygenAlgorithm: string | {
+        name: string;
+        namedCurve?: string;
+        modulusLength?: number;
+        publicExponent?: Uint8Array;
+        hash?: string;
+    }): Promise<RTCCertificate>;
     constructor(configuration?: RTCConfiguration);
     get onconnectionstatechange(): EventTarget.CallbackFunction<this, Event<string>> | null;
     set onconnectionstatechange(value: EventTarget.CallbackFunction<this, Event<string>> | null);

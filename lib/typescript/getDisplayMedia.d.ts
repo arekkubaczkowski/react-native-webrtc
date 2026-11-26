@@ -1,2 +1,8 @@
 import MediaStream from './MediaStream';
-export default function getDisplayMedia(): Promise<MediaStream>;
+export interface Constraints {
+    android?: {
+        createConfigForDefaultDisplay?: boolean;
+        resolutionScale?: number;
+    };
+}
+export default function getDisplayMedia(constraints?: Constraints): Promise<MediaStream>;

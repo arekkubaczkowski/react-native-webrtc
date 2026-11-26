@@ -1,4 +1,4 @@
-package com.oney.WebRTCModule;
+package io.livekit.reactnative.webrtc;
 
 import java.util.Random;
 

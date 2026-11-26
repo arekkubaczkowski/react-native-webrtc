@@ -7,7 +7,7 @@ import { deepClone, normalizeConstraints } from './RTCUtil';
 import { Event, EventTarget, getEventAttributeValue, setEventAttributeValue } from './vendor/event-target-shim';
 
 const log = new Logger('pc');
-const { WebRTCModule } = NativeModules;
+const { LKRNWebRTCModule: WebRTCModule } = NativeModules;
 
 
 type MediaStreamTrackState = 'live' | 'ended';
@@ -123,6 +123,9 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
     stop(): void {
         this.enabled = false;
         this._readyState = 'ended';
+
+        // Like a browser, free the capturer and source on stop(). No-op for remote tracks.
+        this.release();
     }
 
     /**
@@ -210,6 +213,11 @@ export default class MediaStreamTrack extends EventTarget<MediaStreamTrackEventM
             log.info(`Only implemented for video tracks, ignoring applyConstraints for ${this.id}`);
 
             return;
+        }
+
+        // Preserve current facing mode when user doesn't specify one
+        if (constraints && !constraints?.facingMode && this._settings?.facingMode) {
+            constraints.facingMode = this._settings.facingMode;
         }
 
         const normalized = normalizeConstraints({ video: constraints ?? true });

@@ -1,0 +1,1128 @@
+package io.livekit.reactnative.webrtc;
+
+import android.animation.ValueAnimator;
+import android.annotation.SuppressLint;
+import android.content.Context;
+import android.graphics.Color;
+import android.graphics.Matrix;
+import android.graphics.PixelFormat;
+import android.graphics.Point;
+import android.os.Build;
+import android.util.Log;
+import android.view.View;
+import android.view.ViewGroup;
+
+import androidx.core.view.ViewCompat;
+
+import com.facebook.react.bridge.Arguments;
+import com.facebook.react.bridge.Callback;
+import com.facebook.react.bridge.ReactContext;
+import com.facebook.react.bridge.ReadableMap;
+import com.facebook.react.bridge.WritableMap;
+import com.facebook.react.uimanager.events.RCTEventEmitter;
+
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.List;
+import java.util.Objects;
+
+import livekit.org.webrtc.EglBase;
+import livekit.org.webrtc.Logging;
+import livekit.org.webrtc.MediaStream;
+import livekit.org.webrtc.RendererCommon;
+import livekit.org.webrtc.RendererCommon.RendererEvents;
+import livekit.org.webrtc.RendererCommon.ScalingType;
+import livekit.org.webrtc.SurfaceViewRenderer;
+import livekit.org.webrtc.VideoFrame;
+import livekit.org.webrtc.VideoSink;
+import livekit.org.webrtc.VideoTrack;
+
+public class WebRTCView extends ViewGroup {
+    /**
+     * The scaling type to be utilized by default.
+     *
+     * The default value is in accord with
+     * https://www.w3.org/TR/html5/embedded-content-0.html#the-video-element:
+     *
+     * In the absence of style rules to the contrary, video content should be
+     * rendered inside the element's playback area such that the video content
+     * is shown centered in the playback area at the largest possible size that
+     * fits completely within it, with the video content's aspect ratio being
+     * preserved. Thus, if the aspect ratio of the playback area does not match
+     * the aspect ratio of the video, the video will be shown letterboxed or
+     * pillarboxed. Areas of the element's playback area that do not contain the
+     * video represent nothing.
+     */
+    private static final ScalingType DEFAULT_SCALING_TYPE = ScalingType.SCALE_ASPECT_FIT;
+
+    private static final String TAG = WebRTCModule.TAG;
+
+    /**
+     * The number of instances for {@link SurfaceViewRenderer}, used for logging.
+     * When the renderer is initialized, it creates a new {@link javax.microedition.khronos.egl.EGLContext}
+     * which can throw an exception, probably due to memory limitations. We log the number of instances that can
+     * be created before the exception is thrown.
+     */
+    private static int surfaceViewRendererInstances;
+
+    /**
+     * The height of the last video frame rendered by
+     * {@link #surfaceViewRenderer}.
+     */
+    private int frameHeight;
+
+    /**
+     * The rotation (degree) of the last video frame rendered by
+     * {@link #surfaceViewRenderer}.
+     */
+    private int frameRotation;
+
+    /**
+     * The width of the last video frame rendered by
+     * {@link #surfaceViewRenderer}.
+     */
+    private int frameWidth;
+
+    /**
+     * The {@code Object} which synchronizes the access to the layout-related
+     * state of this instance such as {@link #frameHeight},
+     * {@link #frameRotation}, {@link #frameWidth}, and {@link #scalingType}.
+     */
+    private final Object layoutSyncRoot = new Object();
+
+    /**
+     * The indicator which determines whether this {@code WebRTCView} is to
+     * mirror the video represented by {@link #videoTrack} during its rendering.
+     */
+    private boolean mirror;
+
+    /**
+     * Indicates if the {@link SurfaceViewRenderer} is attached to the video
+     * track.
+     */
+    private boolean rendererAttached;
+
+    /**
+     * The {@code RendererEvents} which listens to rendering events reported by
+     * {@link #surfaceViewRenderer}.
+     */
+    private final RendererEvents rendererEvents = new RendererEvents() {
+        @Override
+        public void onFirstFrameRendered() {
+            WebRTCView.this.onFirstFrameRendered();
+        }
+
+        @Override
+        public void onFrameResolutionChanged(int videoWidth, int videoHeight, int rotation) {
+            WebRTCView.this.onFrameResolutionChanged(videoWidth, videoHeight, rotation);
+        }
+    };
+
+    /**
+     * The {@code Runnable} representation of
+     * {@link #requestSurfaceViewRendererLayout()}. Explicitly defined in order
+     * to allow the use of the latter with {@link #post(Runnable)} without
+     * initializing new instances on every (method) call.
+     */
+    private final Runnable requestSurfaceViewRendererLayoutRunnable = new Runnable() {
+        @Override
+        public void run() {
+            requestSurfaceViewRendererLayout();
+        }
+    };
+
+    /**
+     * The scaling type this {@code WebRTCView} is to apply to the video
+     * represented by {@link #videoTrack} during its rendering. An expression of
+     * the CSS property {@code object-fit} in the terms of WebRTC.
+     */
+    private ScalingType scalingType;
+
+    /**
+     * The URL, if any, of the {@link MediaStream} (to be) rendered by this
+     * {@code WebRTCView}. The value of {@link #videoTrack} is derived from it.
+     */
+    private String streamURL;
+
+    /**
+     * The URL most recently passed to {@link #setStreamURL(String)}. The track
+     * lookup is asynchronous, so a callback for an older URL must be ignored.
+     */
+    private String requestedStreamURL;
+
+    /**
+     * The sink currently added to {@link #videoTrack}. It forwards frames to
+     * the selected renderer only while it is open, and it is closed on
+     * the UI thread as soon as the track is let go, so frames of a previous
+     * track are never drawn even if the asynchronous removeSink runs late.
+     */
+    private TrackSink trackSink;
+
+    private static final class TrackSink implements VideoSink {
+        final VideoTrack track;
+        private final VideoSink renderer;
+        private boolean open = true;
+
+        TrackSink(VideoTrack track, VideoSink renderer) {
+            this.track = track;
+            this.renderer = renderer;
+        }
+
+        @Override
+        public synchronized void onFrame(VideoFrame frame) {
+            if (open) {
+                renderer.onFrame(frame);
+            }
+        }
+
+        synchronized void close() {
+            open = false;
+        }
+    }
+
+    /**
+     * The {@link View} which actually renders {@link #videoTrack} on behalf of
+     * this instance. It is not added to the track directly: frames reach it
+     * through the {@link TrackSink} in {@link #trackSink}.
+     */
+    private final SurfaceViewRenderer surfaceViewRenderer;
+
+    /**
+     * The {@code VideoTrack}, if any, rendered by this {@code WebRTCView}.
+     */
+    private VideoTrack videoTrack;
+
+    /**
+     * The callback to be called when video dimensions change.
+     */
+    private boolean onDimensionsChangeEnabled = false;
+
+    /**
+     * Custom video frame transformation values
+     * These affect how the video is rendered INSIDE the SurfaceView
+     */
+    private float customScale = 1.0f;
+    private float customTranslateX = 0f; // as fraction of width
+    private float customTranslateY = 0f; // as fraction of height
+    private boolean useCustomTransform = false;
+
+    /**
+     * When true, uses TextureViewRenderer instead of SurfaceViewRenderer.
+     * TextureView renders in the normal View hierarchy and supports
+     * borderRadius, overflow:hidden, and other clipping.
+     */
+    private boolean useTextureView = false;
+    private TextureViewRenderer textureViewRenderer;
+
+    private static final long FACE_REFRAME_DURATION_NS = 280_000_000L;
+    private boolean useFaceReframe;
+    private volatile FaceReframeGlDrawer faceReframeDrawer;
+    private boolean customTransformPending;
+    private FaceReframeGeometry.Placement reframePlacement;
+    private FaceReframeGeometry.Transition reframeTransition;
+    private int reframeContainerWidth;
+    private int reframeContainerHeight;
+    private float reframeFrameAspect;
+    private final float[] reframePresentedWindow = new float[4];
+    private float surfaceMaskRadiusPx;
+    private int streamRequestId;
+    private boolean maskedRendererDetaching;
+
+    public WebRTCView(Context context) {
+        super(context);
+
+        surfaceViewRenderer = new SurfaceViewRenderer(context);
+        addView(surfaceViewRenderer);
+
+        setMirror(false);
+        setScalingType(DEFAULT_SCALING_TYPE);
+    }
+
+    /**
+     * "Cleans" the {@code SurfaceViewRenderer} by setting the view part to
+     * opaque black and the surface part to transparent.
+     */
+    private void cleanSurfaceViewRenderer() {
+        if (useTextureView && textureViewRenderer != null) {
+            // TextureView doesn't support setBackgroundColor/setBackgroundDrawable
+            textureViewRenderer.clearImage();
+        } else {
+            surfaceViewRenderer.setBackgroundColor(hasSurfaceMask() ? Color.TRANSPARENT : Color.BLACK);
+            surfaceViewRenderer.clearImage();
+        }
+    }
+
+    /**
+     * Asynchronously retrieves the VideoTrack for the given streamURL.
+     * This method avoids blocking the UI thread by performing the lookup
+     * on the WebRTC executor thread and posting the result back to the UI thread.
+     *
+     * @param streamURL The stream URL to lookup
+     * @param callback Callback invoked on UI thread with the VideoTrack (or null if not found)
+     */
+    private void getVideoTrackForStreamURL(String streamURL, java.util.function.Consumer<VideoTrack> callback) {
+        if (streamURL == null || streamURL.isEmpty()) {
+            callback.accept(null);
+            return;
+        }
+
+        ReactContext reactContext = (ReactContext) getContext();
+        WebRTCModule module = reactContext.getNativeModule(WebRTCModule.class);
+
+        // Submit lookup to executor thread to avoid blocking UI thread
+        ThreadUtils.runOnExecutor(() -> {
+            try {
+                MediaStream stream = module.getStreamForReactTag(streamURL);
+                if (stream == null) {
+                    Log.w(TAG, "Stream not found for URL: " + streamURL);
+                    post(() -> callback.accept(null));
+                    return;
+                }
+
+                VideoTrack videoTrack = null;
+                List<VideoTrack> videoTracks = stream.videoTracks;
+                if (!videoTracks.isEmpty()) {
+                    videoTrack = videoTracks.get(0);
+                }
+
+                if (videoTrack == null) {
+                    Log.w(TAG, "No video stream for react tag: " + streamURL);
+                    post(() -> callback.accept(null));
+                    return;
+                }
+
+                // Post result back to UI thread
+                final VideoTrack result = videoTrack;
+                post(() -> callback.accept(result));
+            } catch (Throwable tr) {
+                Log.e(TAG, "Error getting video track for stream URL: " + streamURL, tr);
+                post(() -> callback.accept(null));
+            }
+        });
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        try {
+            // Generally, OpenGL is only necessary while this View is attached
+            // to a window so there is no point in having the whole rendering
+            // infrastructure hooked up while this View is not attached to a
+            // window. Additionally, a memory leak was solved in a similar way
+            // on iOS.
+            tryAddRendererToVideoTrack();
+        } finally {
+            super.onAttachedToWindow();
+        }
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        try {
+            // Generally, OpenGL is only necessary while this View is attached
+            // to a window so there is no point in having the whole rendering
+            // infrastructure hooked up while this View is not attached to a
+            // window. Additionally, a memory leak was solved in a similar way
+            // on iOS.
+            removeRendererFromVideoTrack();
+        } finally {
+            super.onDetachedFromWindow();
+        }
+    }
+
+    /**
+     * Callback fired by {@link #surfaceViewRenderer} when the first frame is
+     * rendered. Here we will set the background of the view part of the
+     * SurfaceView to transparent, so the surface (where video is actually
+     * rendered) shines through.
+     */
+    private void onFirstFrameRendered() {
+        post(() -> {
+            Log.d(TAG, "First frame rendered.");
+            // TextureView doesn't support setBackgroundColor/setBackgroundDrawable
+            if (!useTextureView) {
+                surfaceViewRenderer.setBackgroundColor(Color.TRANSPARENT);
+            }
+        });
+    }
+
+    /**
+     * Callback fired by {@link #surfaceViewRenderer} when the resolution or
+     * rotation of the frame it renders has changed.
+     *
+     * @param videoWidth The new width of the rendered video frame.
+     * @param videoHeight The new height of the rendered video frame.
+     * @param rotation The new rotation of the rendered video frame.
+     */
+    private void onFrameResolutionChanged(int videoWidth, int videoHeight, int rotation) {
+        FaceReframeGlDrawer reframeDrawer = faceReframeDrawer;
+        if (reframeDrawer != null && videoWidth > 0 && videoHeight > 0) {
+            // The render thread can still be drawing a frame with the previous aspect.
+            reframeDrawer.setFrameAspect(computeFrameAspectRatio(videoWidth, videoHeight, rotation));
+        }
+        boolean changed = false;
+
+        synchronized (layoutSyncRoot) {
+            if (this.frameHeight != videoHeight) {
+                this.frameHeight = videoHeight;
+                changed = true;
+            }
+            if (this.frameRotation != rotation) {
+                this.frameRotation = rotation;
+                changed = true;
+            }
+            if (this.frameWidth != videoWidth) {
+                this.frameWidth = videoWidth;
+                changed = true;
+            }
+        }
+        if (changed) {
+            // The onFrameResolutionChanged method call executes on the
+            // surfaceViewRenderer's render Thread.
+            post(requestSurfaceViewRendererLayoutRunnable);
+
+            // Call the onDimensionsChange callback if it's enabled
+            if (onDimensionsChangeEnabled) {
+                post(() -> {
+                    try {
+                        ReactContext reactContext = (ReactContext) getContext();
+                        WritableMap params = Arguments.createMap();
+                        // The renderer reports the buffer size; JS gets the displayed
+                        // size, as iOS reports it.
+                        boolean isRotated = rotation % 180 != 0;
+                        params.putInt("width", isRotated ? videoHeight : videoWidth);
+                        params.putInt("height", isRotated ? videoWidth : videoHeight);
+
+                        // Send the event through React Native's event system
+                        reactContext.getJSModule(RCTEventEmitter.class)
+                                .receiveEvent(getId(), "onDimensionsChange", params);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error calling onDimensionsChange callback", e);
+                    }
+                });
+            }
+        }
+    }
+
+    @Override
+    protected void onLayout(boolean changed, int l, int t, int r, int b) {
+        int width = r - l;
+        int height = b - t;
+
+        if (width == 0 || height == 0) {
+            resetFaceReframe();
+            layoutRenderer(0, 0, 0, 0);
+            return;
+        }
+
+        int frameWidth, frameHeight, frameRotation;
+        ScalingType scalingType;
+        synchronized (layoutSyncRoot) {
+            frameWidth = this.frameWidth;
+            frameHeight = this.frameHeight;
+            frameRotation = this.frameRotation;
+            scalingType = this.scalingType;
+        }
+
+        if (hasSurfaceMask()) {
+            layoutRenderer(0, 0, width, height);
+            if (useCustomTransform && frameWidth > 0 && frameHeight > 0) {
+                float frameAspect = computeFrameAspectRatio(frameWidth, frameHeight, frameRotation);
+                FaceReframeGeometry.Placement placement = FaceReframeGeometry.cover(
+                        width, height, frameAspect, customScale, customTranslateX, customTranslateY);
+                publishFaceReframe(placement, width, height, frameWidth, frameHeight, frameRotation);
+            } else {
+                resetFaceReframe();
+            }
+        } else if (useCustomTransform && frameWidth > 0 && frameHeight > 0) {
+            layoutWithCustomTransform(width, height, frameWidth, frameHeight, frameRotation);
+        } else {
+            resetFaceReframe();
+            layoutWithDefaultScaling(width, height, frameWidth, frameHeight, frameRotation, scalingType);
+        }
+    }
+
+    private void layoutWithCustomTransform(int width, int height, int frameWidth, int frameHeight, int frameRotation) {
+        float frameAspectRatio = computeFrameAspectRatio(frameWidth, frameHeight, frameRotation);
+        Point baseSize = RendererCommon.getDisplaySize(ScalingType.SCALE_ASPECT_FIT, frameAspectRatio, width, height);
+
+        if (useTextureView && textureViewRenderer != null) {
+            // TextureView: lay the renderer out at the FULL container and apply
+            // scale/translate as a 2D matrix on the texture content. Container-sized
+            // bounds are required so customScale > 1 can grow past baseSize and cover
+            // the letterbox area (a baseSize-sized renderer would clip the zoom to
+            // the letterbox interior). The matrix first shrinks the EglRenderer's
+            // stretched-to-view content back to baseSize aspect, then applies
+            // customScale + translate. The GPU handles the transform during
+            // composition — no relayout / SurfaceTexture rebuild on transform changes.
+            layoutRenderer(0, 0, width, height);
+            applyCustomTextureTransform(width, height, baseSize.x, baseSize.y);
+            return;
+        }
+        // SurfaceView: scale by sizing the renderer's bounds. SCALE_ASPECT_FIT inside
+        // the renderer letterboxes the frame and preserves aspect; per-edge clamp
+        // prevents the surface from drawing over sibling views (SurfaceView ignores
+        // parent overflow:hidden).
+        surfaceViewRenderer.setScalingType(ScalingType.SCALE_ASPECT_FIT);
+        FaceReframeGeometry.Placement placement = FaceReframeGeometry.place(
+                width, height, baseSize.x, baseSize.y, customScale, customTranslateX, customTranslateY);
+        layoutRenderer(placement.left, placement.top, placement.right, placement.bottom);
+        publishFaceReframe(placement, width, height, frameWidth, frameHeight, frameRotation);
+    }
+
+    /**
+     * Hands the drawer the window the renderer bounds should show. Animates only between two
+     * windows with identical bounds, container and frame geometry on the same renderer; any
+     * other change snaps, like the surface resize that accompanies it.
+     */
+    private void publishFaceReframe(FaceReframeGeometry.Placement placement, int containerWidth, int containerHeight,
+            int frameWidth, int frameHeight, int frameRotation) {
+        FaceReframeGlDrawer drawer = faceReframeDrawer;
+        if (drawer == null) {
+            return;
+        }
+        if (!placement.hasWindow) {
+            resetFaceReframe();
+            return;
+        }
+        // Aspect, not size: a simulcast layer switch keeps the window valid and the animation going.
+        float frameAspect = computeFrameAspectRatio(frameWidth, frameHeight, frameRotation);
+        boolean sameGeometry = placement.sameBounds(reframePlacement) && containerWidth == reframeContainerWidth
+                && containerHeight == reframeContainerHeight && frameAspect == reframeFrameAspect;
+        if (sameGeometry && placement.sameWindow(reframePlacement)) {
+            return;
+        }
+        // Same float division SurfaceViewRenderer.onLayout feeds EglRenderer.setLayoutAspectRatio.
+        float boundsAspect = (placement.right - placement.left) / (float) (placement.bottom - placement.top);
+        FaceReframeGeometry.Transition next;
+        if (sameGeometry && reframeTransition != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                && ValueAnimator.areAnimatorsEnabled()) {
+            long now = System.nanoTime();
+            FaceReframeGeometry.windowAt(reframeTransition, now, reframePresentedWindow);
+            next = new FaceReframeGeometry.Transition(reframePresentedWindow[0],
+                    reframePresentedWindow[1],
+                    reframePresentedWindow[2],
+                    reframePresentedWindow[3],
+                    placement.windowX,
+                    placement.windowY,
+                    placement.windowWidth,
+                    placement.windowHeight,
+                    now,
+                    FACE_REFRAME_DURATION_NS,
+                    boundsAspect);
+        } else {
+            next = FaceReframeGeometry.Transition.snap(placement, boundsAspect);
+        }
+        drawer.setTransition(next);
+        reframeTransition = next;
+        reframePlacement = placement;
+        reframeContainerWidth = containerWidth;
+        reframeContainerHeight = containerHeight;
+        reframeFrameAspect = frameAspect;
+    }
+
+    private void resetFaceReframe() {
+        FaceReframeGlDrawer drawer = faceReframeDrawer;
+        if (drawer != null) {
+            drawer.setTransition(null);
+        }
+        reframeTransition = null;
+        reframePlacement = null;
+    }
+
+    private void layoutWithDefaultScaling(
+            int width, int height, int frameWidth, int frameHeight, int frameRotation, ScalingType scalingType) {
+        if (scalingType == ScalingType.SCALE_ASPECT_FILL) {
+            if (useTextureView && frameWidth > 0 && frameHeight > 0) {
+                // EglRenderer has no built-in scaling — compute cover bounds; the
+                // parent ViewGroup clips overflow.
+                float frameAspectRatio = computeFrameAspectRatio(frameWidth, frameHeight, frameRotation);
+                float viewAspectRatio = width / (float) height;
+                int displayW, displayH;
+                if (frameAspectRatio > viewAspectRatio) {
+                    displayH = height;
+                    displayW = Math.round(height * frameAspectRatio);
+                } else {
+                    displayW = width;
+                    displayH = Math.round(width / frameAspectRatio);
+                }
+                layoutRendererCentered(width, height, displayW, displayH);
+            } else {
+                // SurfaceView (or TextureView with no frame yet): renderer fills
+                // the container. SurfaceView handles internal scaling; TextureView
+                // gets an empty surface until the first frame arrives.
+                layoutRenderer(0, 0, width, height);
+            }
+            return;
+        }
+        // SCALE_ASPECT_FIT (and any other default).
+        if (frameWidth == 0 || frameHeight == 0) {
+            layoutRenderer(0, 0, 0, 0);
+            return;
+        }
+        float frameAspectRatio = computeFrameAspectRatio(frameWidth, frameHeight, frameRotation);
+        Point displaySize = RendererCommon.getDisplaySize(scalingType, frameAspectRatio, width, height);
+        layoutRendererCentered(width, height, displaySize.x, displaySize.y);
+    }
+
+    private void layoutRenderer(int l, int t, int r, int b) {
+        if (useTextureView && textureViewRenderer != null) {
+            textureViewRenderer.layout(l, t, r, b);
+        } else {
+            surfaceViewRenderer.layout(l, t, r, b);
+        }
+    }
+
+    private void layoutRendererCentered(int containerWidth, int containerHeight, int contentWidth, int contentHeight) {
+        int left = (containerWidth - contentWidth) / 2;
+        int top = (containerHeight - contentHeight) / 2;
+        layoutRenderer(left, top, left + contentWidth, top + contentHeight);
+    }
+
+    private static float computeFrameAspectRatio(int frameWidth, int frameHeight, int frameRotation) {
+        return (frameRotation % 180 == 0) ? frameWidth / (float) frameHeight : frameHeight / (float) frameWidth;
+    }
+
+    /**
+     * Stops rendering {@link #videoTrack} and releases the associated acquired
+     * resources (if rendering is in progress).
+     */
+    private void removeRendererFromVideoTrack() {
+        if (rendererAttached) {
+            resetFaceReframe();
+            faceReframeDrawer = null;
+            final boolean masked = hasSurfaceMask();
+            // Capture the sink now: by the time the executor runs, the
+            // videoTrack field may already be null or the next track.
+            final TrackSink sink = trackSink;
+            trackSink = null;
+            if (sink != null) {
+                sink.close();
+                maskedRendererDetaching = masked;
+                ThreadUtils.runOnExecutor(() -> {
+                    try {
+                        sink.track.removeSink(sink);
+                    } catch (IllegalStateException e) {
+                        // XXX If WebRTCModule#mediaStreamTrackRelease has already been
+                        // invoked on the track this sink was added to, then the track is
+                        // disposed and removeSink throws IllegalStateException. That is
+                        // expected and there is nothing left to remove.
+                    } catch (Throwable tr) {
+                        Log.w(TAG, "Failed to remove renderer", tr);
+                    } finally {
+                        if (masked) {
+                            post(() -> {
+                                maskedRendererDetaching = false;
+                                tryAddRendererToVideoTrack();
+                            });
+                        }
+                    }
+                });
+            }
+
+            if (useTextureView && textureViewRenderer != null) {
+                textureViewRenderer.release();
+            } else {
+                surfaceViewRenderer.release();
+                if (masked) {
+                    // Destroy the masked layer so its last buffer cannot remain visible.
+                    surfaceViewRenderer.setVisibility(View.INVISIBLE);
+                }
+            }
+            surfaceViewRendererInstances--;
+            rendererAttached = false;
+
+            // Since this WebRTCView is no longer rendering anything, make sure
+            // the renderer displays nothing as well.
+            synchronized (layoutSyncRoot) {
+                frameHeight = 0;
+                frameRotation = 0;
+                frameWidth = 0;
+            }
+            requestSurfaceViewRendererLayout();
+        }
+    }
+
+    /**
+     * Request that {@link #surfaceViewRenderer} be laid out (as soon as
+     * possible) because layout-related state either of this instance or of
+     * {@code surfaceViewRenderer} has changed.
+     */
+    @SuppressLint("WrongCall")
+    private void requestSurfaceViewRendererLayout() {
+        // Google/WebRTC just call requestLayout() on the renderer when
+        // they change the value of its mirror or surfaceType property.
+        if (useTextureView && textureViewRenderer != null) {
+            textureViewRenderer.requestLayout();
+        } else {
+            surfaceViewRenderer.requestLayout();
+        }
+        // The above is not enough though when the video frame's dimensions or
+        // rotation change. The following will suffice.
+        if (!ViewCompat.isInLayout(this)) {
+            onLayout(
+                    /* changed */ false, getLeft(), getTop(), getRight(), getBottom());
+        }
+    }
+
+    /**
+     * Sets the indicator which determines whether this {@code WebRTCView} is to
+     * mirror the video represented by {@link #videoTrack} during its rendering.
+     *
+     * @param mirror If this {@code WebRTCView} is to mirror the video
+     * represented by {@code videoTrack} during its rendering, {@code true};
+     * otherwise, {@code false}.
+     */
+    public void setMirror(boolean mirror) {
+        if (this.mirror != mirror) {
+            this.mirror = mirror;
+            if (useTextureView && textureViewRenderer != null) {
+                textureViewRenderer.setMirror(mirror);
+            } else {
+                surfaceViewRenderer.setMirror(mirror);
+            }
+            requestSurfaceViewRendererLayout();
+        }
+    }
+
+    /**
+     * In the fashion of
+     * https://www.w3.org/TR/html5/embedded-content-0.html#dom-video-videowidth
+     * and https://www.w3.org/TR/html5/rendering.html#video-object-fit,
+     * resembles the CSS style {@code object-fit}.
+     *
+     * @param objectFit For details, refer to the documentation of the
+     * {@code objectFit} property of the JavaScript counterpart of
+     * {@code WebRTCView} i.e. {@code RTCView}.
+     */
+    public void setObjectFit(String objectFit) {
+        ScalingType scalingType =
+                "cover".equals(objectFit) ? ScalingType.SCALE_ASPECT_FILL : ScalingType.SCALE_ASPECT_FIT;
+
+        setScalingType(scalingType);
+    }
+
+    private void setScalingType(ScalingType scalingType) {
+        synchronized (layoutSyncRoot) {
+            if (this.scalingType == scalingType) {
+                return;
+            }
+            this.scalingType = scalingType;
+            if (useTextureView && textureViewRenderer != null) {
+                textureViewRenderer.setScalingType(scalingType);
+            } else {
+                surfaceViewRenderer.setScalingType(scalingType);
+            }
+        }
+        requestSurfaceViewRendererLayout();
+    }
+
+    /**
+     * Sets the {@code MediaStream} to be rendered by this {@code WebRTCView}.
+     * The implementation renders the first {@link VideoTrack}, if any, of the
+     * specified {@code mediaStream}.
+     *
+     * @param streamURL The URL of the {@code MediaStream} to be rendered by
+     * this {@code WebRTCView} or {@code null}.
+     */
+    void setStreamURL(String streamURL) {
+        Log.d(TAG,
+                "Set stream URL " + streamURL + " requested: " + this.requestedStreamURL
+                        + " applied: " + this.streamURL);
+        // Compare with the last requested URL, not the applied one, which is
+        // only updated once the asynchronous lookup below completes.
+        if (!hasSurfaceMask() && Objects.equals(streamURL, this.requestedStreamURL)) {
+            return;
+        }
+        this.requestedStreamURL = streamURL;
+        final int requestId = ++streamRequestId;
+
+        // The value of this.streamURL is really changing. Look up the new
+        // videoTrack asynchronously and, once the lookup completes, let go of
+        // the old videoTrack (only if the track really changes) and render
+        // the new one. removeRendererFromVideoTrack removes exactly the
+        // TrackSink that was added to the old videoTrack and closes it right
+        // away, so the old track's frames are not drawn after the switch even
+        // if the asynchronous removeSink runs late.
+        getVideoTrackForStreamURL(streamURL, videoTrack -> {
+            if (requestId != streamRequestId) {
+                return;
+            }
+
+            Log.d(TAG, "Got video track for stream URL " + streamURL + " -> " + videoTrack);
+            if (!Objects.equals(streamURL, this.requestedStreamURL)) {
+                // A newer setStreamURL call superseded this one.
+                Log.d(TAG, "Ignoring stale track lookup for " + streamURL + ", requested: " + requestedStreamURL);
+                return;
+            }
+            if (this.videoTrack != videoTrack) {
+                setVideoTrack(null);
+            }
+
+            this.streamURL = streamURL;
+
+            // After realizing/applying the change in the value of
+            // this.streamURL, reflect it on the value of videoTrack.
+            setVideoTrack(videoTrack);
+        });
+    }
+
+    /**
+     * Sets the {@code VideoTrack} to be rendered by this {@code WebRTCView}.
+     *
+     * @param videoTrack The {@code VideoTrack} to be rendered by this
+     * {@code WebRTCView} or {@code null}.
+     */
+    private void setVideoTrack(VideoTrack videoTrack) {
+        VideoTrack oldVideoTrack = this.videoTrack;
+
+        if (oldVideoTrack != videoTrack) {
+            if (oldVideoTrack != null) {
+                if (videoTrack == null) {
+                    // If we are not going to render any stream, clean the
+                    // surface.
+                    cleanSurfaceViewRenderer();
+                }
+                removeRendererFromVideoTrack();
+            }
+
+            this.videoTrack = videoTrack;
+
+            if (videoTrack != null) {
+                tryAddRendererToVideoTrack();
+                if (oldVideoTrack == null && !hasSurfaceMask()) {
+                    // If there was no old track, clean the surface so we start
+                    // with black.
+                    cleanSurfaceViewRenderer();
+                }
+            }
+        }
+    }
+
+    /**
+     * Sets the z-order of this {@link WebRTCView} in the stacking space of all
+     * {@code WebRTCView}s. For more details, refer to the documentation of the
+     * {@code zOrder} property of the JavaScript counterpart of
+     * {@code WebRTCView} i.e. {@code RTCView}.
+     *
+     * @param zOrder The z-order to set on this {@code WebRTCView}.
+     */
+    public void setZOrder(int zOrder) {
+        // TextureView uses normal View z-ordering, no special handling needed
+        if (useTextureView) {
+            return;
+        }
+        switch (zOrder) {
+            case 0:
+                surfaceViewRenderer.setZOrderMediaOverlay(false);
+                break;
+            case 1:
+                surfaceViewRenderer.setZOrderMediaOverlay(true);
+                break;
+            case 2:
+                surfaceViewRenderer.setZOrderOnTop(true);
+                break;
+        }
+    }
+
+    /**
+     * Starts rendering {@link #videoTrack} if rendering is not in progress and
+     * all preconditions for the start of rendering are met.
+     */
+    private void tryAddRendererToVideoTrack() {
+        if (!rendererAttached && !maskedRendererDetaching && videoTrack != null
+                && ViewCompat.isAttachedToWindow(this)) {
+            EglBase.Context sharedContext = EglUtils.getRootEglBaseContext();
+
+            if (sharedContext == null) {
+                Log.e(TAG, "Failed to render a VideoTrack!");
+                return;
+            }
+
+            if (useTextureView) {
+                if (textureViewRenderer == null) {
+                    textureViewRenderer = new TextureViewRenderer(getContext());
+                    addView(textureViewRenderer);
+                    surfaceViewRenderer.setVisibility(View.GONE);
+                }
+
+                try {
+                    textureViewRenderer.init(sharedContext, rendererEvents);
+                    surfaceViewRendererInstances++;
+                } catch (Exception e) {
+                    Logging.e(TAG,
+                            "Failed to initialize textureViewRenderer on instance " + surfaceViewRendererInstances,
+                            e);
+                    return;
+                }
+
+                textureViewRenderer.setScalingType(scalingType);
+                textureViewRenderer.setMirror(mirror);
+            } else {
+                try {
+                    if (hasSurfaceMask()) {
+                        FaceReframeGlDrawer drawer = new FaceReframeGlDrawer(new MaskedGlDrawer(surfaceMaskRadiusPx));
+                        surfaceViewRenderer.init(sharedContext, rendererEvents, EglBase.CONFIG_RGBA, drawer);
+                        faceReframeDrawer = drawer;
+                        surfaceViewRenderer.setVisibility(View.VISIBLE);
+                    } else if (useFaceReframe) {
+                        FaceReframeGlDrawer drawer = new FaceReframeGlDrawer();
+                        faceReframeDrawer = drawer;
+                        surfaceViewRenderer.init(sharedContext, rendererEvents, EglBase.CONFIG_PLAIN, drawer);
+                    } else {
+                        surfaceViewRenderer.init(sharedContext, rendererEvents);
+                    }
+                    surfaceViewRendererInstances++;
+                } catch (Exception e) {
+                    faceReframeDrawer = null;
+                    Logging.e(TAG,
+                            "Failed to initialize surfaceViewRenderer on instance " + surfaceViewRendererInstances,
+                            e);
+                    return;
+                }
+            }
+
+            // Frames from an old track must not reach the renderer after it is reused.
+            final TrackSink sink =
+                    new TrackSink(videoTrack, useTextureView ? textureViewRenderer : surfaceViewRenderer);
+            trackSink = sink;
+            ThreadUtils.runOnExecutor(() -> {
+                try {
+                    sink.track.addSink(sink);
+                } catch (IllegalStateException e) {
+                    // The track was already released.
+                } catch (Throwable tr) {
+                    Log.w(TAG, "Failed to add renderer", tr);
+                }
+            });
+            rendererAttached = true;
+            if (hasSurfaceMask()) {
+                requestSurfaceViewRendererLayout();
+            }
+        }
+    }
+
+    /**
+     * Sets whether the onDimensionsChange callback should be called.
+     *
+     * @param enabled Whether the callback should be enabled.
+     */
+    public void setOnDimensionsChange(boolean enabled) {
+        this.onDimensionsChangeEnabled = enabled;
+    }
+
+    /**
+     * Sets custom scale for video rendering.
+     *
+     * @param scale The scale factor (1.0 = original size).
+     */
+    public void setCustomScale(float scale) {
+        if (this.customScale != scale) {
+            this.customScale = scale;
+            onCustomTransformChanged();
+        }
+    }
+
+    /**
+     * Sets custom X translation for video rendering.
+     *
+     * @param translateX Translation as fraction of container width.
+     */
+    public void setCustomTranslateX(float translateX) {
+        if (this.customTranslateX != translateX) {
+            this.customTranslateX = translateX;
+            onCustomTransformChanged();
+        }
+    }
+
+    /**
+     * Sets custom Y translation for video rendering.
+     *
+     * @param translateY Translation as fraction of container height.
+     */
+    public void setCustomTranslateY(float translateY) {
+        if (this.customTranslateY != translateY) {
+            this.customTranslateY = translateY;
+            onCustomTransformChanged();
+        }
+    }
+
+    private boolean isFaceReframeActive() {
+        return useFaceReframe && !useTextureView;
+    }
+
+    /**
+     * When face reframing is active, X, Y and scale are only recorded here and applied together by
+     * {@link #commitPendingCustomTransform()} once per prop transaction.
+     */
+    private void onCustomTransformChanged() {
+        if (isFaceReframeActive() || hasSurfaceMask()) {
+            customTransformPending = true;
+        } else {
+            applyCustomTransformOrRequestLayout();
+        }
+    }
+
+    /** Called by the view manager after every prop transaction. */
+    void commitPendingCustomTransform() {
+        if (!customTransformPending) {
+            return;
+        }
+        customTransformPending = false;
+        if (!ViewCompat.isInLayout(this)) {
+            onLayout(/* changed */ false, getLeft(), getTop(), getRight(), getBottom());
+        } else {
+            post(requestSurfaceViewRendererLayoutRunnable);
+        }
+    }
+
+    public void setUseFaceReframe(boolean enabled) {
+        if (useFaceReframe == enabled) {
+            return;
+        }
+        useFaceReframe = enabled;
+        customTransformPending = false;
+        if (rendererAttached && !useTextureView) {
+            removeRendererFromVideoTrack();
+            tryAddRendererToVideoTrack();
+        }
+        requestSurfaceViewRendererLayout();
+    }
+
+    /**
+     * Enables or disables custom transformation mode.
+     *
+     * @param enabled Whether custom transformations should be used.
+     */
+    public void setUseCustomTransform(boolean enabled) {
+        if (this.useCustomTransform != enabled) {
+            this.useCustomTransform = enabled;
+            // Reset the texture matrix when leaving custom-transform mode so a stale
+            // scale/translate from the previous state doesn't bleed into the default
+            // scaling path (which never calls setTransform).
+            if (!enabled && useTextureView && textureViewRenderer != null) {
+                textureViewRenderer.setTransform(new Matrix());
+            }
+            requestSurfaceViewRendererLayout();
+        }
+    }
+
+    /**
+     * Applies customScale + customTranslate{X,Y} as a 2D matrix on the TextureView's
+     * content. Cheap — no layout pass, only a redraw triggered by setTransform.
+     *
+     * The TextureView is laid out at the container size, so the EglRenderer's content
+     * fills the view (stretched, aspect-distorted unless container == frame aspect).
+     * The matrix first shrinks that content back to the fitted base size — undoing
+     * the stretch and producing correct aspect — then scales by customScale and
+     * translates. With customScale = 1 the result matches SCALE_ASPECT_FIT (letterbox);
+     * with customScale > 1 the rendered frame grows past baseSize and covers the
+     * previously-letterbox area, with overflow clipped by TextureView's bounds.
+     */
+    private void applyCustomTextureTransform(int containerWidth, int containerHeight, int baseWidth, int baseHeight) {
+        if (textureViewRenderer == null) {
+            return;
+        }
+        float fitScaleX = baseWidth / (float) containerWidth;
+        float fitScaleY = baseHeight / (float) containerHeight;
+        Matrix matrix = new Matrix();
+        matrix.setScale(fitScaleX * customScale, fitScaleY * customScale, containerWidth / 2f, containerHeight / 2f);
+        matrix.postTranslate(containerWidth * customTranslateX, containerHeight * customTranslateY);
+        textureViewRenderer.setTransform(matrix);
+    }
+
+    /**
+     * Hot path used by custom-transform setters. When the matrix-based path is active
+     * and dimensions are known, just update the matrix — no relayout, no SurfaceTexture
+     * rebuild. Otherwise fall back to a normal layout pass (first frame, before initial
+     * layout, SurfaceView mode, or custom transform disabled).
+     */
+    private void applyCustomTransformOrRequestLayout() {
+        int frameW, frameH, frameRotation;
+        synchronized (layoutSyncRoot) {
+            frameW = this.frameWidth;
+            frameH = this.frameHeight;
+            frameRotation = this.frameRotation;
+        }
+        int containerW = getWidth();
+        int containerH = getHeight();
+        if (useCustomTransform && useTextureView && textureViewRenderer != null && containerW > 0 && containerH > 0
+                && frameW > 0 && frameH > 0) {
+            float frameAspectRatio = computeFrameAspectRatio(frameW, frameH, frameRotation);
+            Point baseSize = RendererCommon.getDisplaySize(
+                    ScalingType.SCALE_ASPECT_FIT, frameAspectRatio, containerW, containerH);
+            applyCustomTextureTransform(containerW, containerH, baseSize.x, baseSize.y);
+        } else {
+            requestSurfaceViewRendererLayout();
+        }
+    }
+
+    /** Set with initial props, before the SurfaceHolder creates the window surface. */
+    void setSurfaceMaskRadius(float radiusDp) {
+        if (ViewCompat.isAttachedToWindow(this)) {
+            return;
+        }
+        boolean wasMasked = surfaceMaskRadiusPx > 0f;
+        surfaceMaskRadiusPx =
+                Float.isFinite(radiusDp) && radiusDp > 0f ? radiusDp * getResources().getDisplayMetrics().density : 0f;
+        if (surfaceMaskRadiusPx > 0f) {
+            surfaceViewRenderer.getHolder().setFormat(PixelFormat.RGBA_8888);
+            surfaceViewRenderer.setBackgroundColor(Color.TRANSPARENT);
+            surfaceViewRenderer.setVisibility(View.INVISIBLE);
+        } else if (wasMasked) {
+            surfaceViewRenderer.getHolder().setFormat(PixelFormat.OPAQUE);
+            surfaceViewRenderer.setVisibility(useTextureView ? View.GONE : View.VISIBLE);
+        }
+    }
+
+    private boolean hasSurfaceMask() {
+        return !useTextureView && surfaceMaskRadiusPx > 0f;
+    }
+
+    /**
+     * Switches between SurfaceViewRenderer and TextureViewRenderer.
+     * TextureView renders in the normal View hierarchy and supports
+     * borderRadius, overflow:hidden, and other View clipping.
+     *
+     * @param useTextureView If true, use TextureViewRenderer.
+     */
+    public void setUseTextureView(boolean useTextureView) {
+        if (this.useTextureView == useTextureView) {
+            return;
+        }
+
+        // Detach current renderer from video track
+        removeRendererFromVideoTrack();
+
+        // Defensive release of the soon-to-be-active renderer. It may carry leftover
+        // initialised EglRenderer state from a previous toggle cycle where the track was
+        // removed without going through removeRendererFromVideoTrack. Calling init() twice
+        // without an intermediate release throws — release here is idempotent (both
+        // SurfaceViewRenderer and TextureViewRenderer guard their internal state).
+        if (useTextureView) {
+            if (textureViewRenderer != null) {
+                textureViewRenderer.release();
+            }
+        } else {
+            surfaceViewRenderer.release();
+        }
+
+        this.useTextureView = useTextureView;
+
+        if (useTextureView) {
+            surfaceViewRenderer.setVisibility(View.GONE);
+            if (textureViewRenderer == null) {
+                textureViewRenderer = new TextureViewRenderer(getContext());
+                addView(textureViewRenderer);
+            }
+            textureViewRenderer.setVisibility(View.VISIBLE);
+        } else {
+            if (textureViewRenderer != null) {
+                textureViewRenderer.setVisibility(View.GONE);
+            }
+            surfaceViewRenderer.setVisibility(hasSurfaceMask() ? View.INVISIBLE : View.VISIBLE);
+        }
+
+        // Re-attach to video track with the new renderer
+        tryAddRendererToVideoTrack();
+    }
+}

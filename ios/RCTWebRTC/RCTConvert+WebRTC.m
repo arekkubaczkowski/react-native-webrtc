@@ -1,8 +1,11 @@
+#import <LiveKitWebRTC/RTCCertificate.h>
 #import <LiveKitWebRTC/RTCDataChannelConfiguration.h>
 #import <LiveKitWebRTC/RTCIceServer.h>
 #import <LiveKitWebRTC/RTCSessionDescription.h>
 #import <React/RCTLog.h>
 #import "RCTConvert+WebRTC.h"
+
+#import "LKRNWebRTCModule+RTCPeerConnection.h"
 
 @implementation RCTConvert (WebRTC)
 
@@ -92,7 +95,9 @@
 
     // Enable GCM ciphers.
     LKRTCCryptoOptions *cryptoOptions = [[LKRTCCryptoOptions alloc] initWithSrtpEnableGcmCryptoSuites:YES
+                                                                            srtpPreferGcmCryptoSuites:NO
                                                                   srtpEnableAes128Sha1_32CryptoCipher:NO
+                                                                  srtpEnableAes128Sha1_80CryptoCipher:YES
                                                                srtpEnableEncryptedRtpHeaderExtensions:NO
                                                                          sframeRequireFrameEncryption:NO];
     config.cryptoOptions = cryptoOptions;
@@ -120,6 +125,10 @@
         } else if ([bundlePolicy isEqualToString:@"max-bundle"]) {
             config.bundlePolicy = LKRTCBundlePolicyMaxBundle;
         }
+    }
+
+    if (json[@"enableSctpSnap"] != nil && [json[@"enableSctpSnap"] isKindOfClass:[NSNumber class]]) {
+        config.enableSctpSnap = [RCTConvert BOOL:json[@"enableSctpSnap"]];
     }
 
     if (json[@"iceBackupCandidatePairPingInterval"] != nil &&
@@ -171,6 +180,22 @@
             config.tcpCandidatePolicy = LKRTCTcpCandidatePolicyEnabled;
         } else if ([tcpCandidatePolicy isEqualToString:@"disabled"]) {
             config.tcpCandidatePolicy = LKRTCTcpCandidatePolicyDisabled;
+        }
+    }
+
+    if (json[@"certificates"] != nil && [json[@"certificates"] isKindOfClass:[NSArray class]]) {
+        NSArray *certs = json[@"certificates"];
+        if (certs.count > 0) {
+            id certInfo = certs[0];
+            if ([certInfo isKindOfClass:[NSDictionary class]]) {
+                NSString *certId = certInfo[@"certificateId"];
+                if (certId) {
+                    LKRTCCertificate *cert = [LKRNWebRTCModule getCertificate:certId];
+                    if (cert) {
+                        config.certificate = cert;
+                    }
+                }
+            }
         }
     }
 

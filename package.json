@@ -1,6 +1,6 @@
 {
   "name": "@livekit/react-native-webrtc",
-  "version": "144.2.0",
+  "version": "150.2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/livekit/react-native-webrtc.git"
@@ -27,10 +27,9 @@
     "react-native": ">=0.60.0"
   },
   "scripts": {
-    "lint": "eslint --max-warnings 0 . && tsc --noEmit",
+    "lint": "eslint --max-warnings 0 . && tsc --noEmit && node tools/prefix-native-names.mjs --check",
     "lintfix": "eslint --max-warnings 0 --fix . && tsc --noEmit",
-    "copy-vendor-types": "node scripts/copy-vendor-types.js",
-    "build": "bob build && npm run copy-vendor-types",
+    "build": "bob build && node tools/postbuild.mjs",
     "prepare": "husky install && npm run build",
     "format": "tools/format.sh"
   },
